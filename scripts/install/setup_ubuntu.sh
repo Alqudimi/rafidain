@@ -62,6 +62,8 @@ trap 'rc=$?; if [ "$rc" -ne 0 ]; then
         printf "\n"; err "Setup failed (exit $rc, line $LINENO).";
         log "Debug re-run:  bash -x <script> <your-args>";
       fi' EXIT
+# live progress on a terminal; quiet when piped/redirected (curl-bash safe)
+if [ -t 1 ]; then PIPV=(--progress-bar on); CURLV=(--progress-bar); else PIPV=(-q); CURLV=(-sS); fi
 STEP_N=0; STEP_T=10
 
 # ----------------------------------------------------------------- arguments
@@ -110,7 +112,11 @@ log "OS: ${PRETTY_NAME:-unknown} (id=$OS_ID $OS_VER) · user=$(id -un) uid=$(id 
 
 SUDO=""
 if [ "$(id -u)" -ne 0 ]; then
-  if command -v sudo >/dev/null 2>&1; then SUDO="sudo"
+  # curl-bash safe: a sudo password prompt would eat the piped script —
+  # only use sudo when it works non-interactively (sudo -n).
+  if command -v sudo >/dev/null 2>&1 && sudo -n true 2>/dev/null; then SUDO="sudo -n"
+  elif command -v sudo >/dev/null 2>&1; then
+    warn "sudo needs a password — system package installs skipped (re-run as root, or with passwordless sudo, or install ffmpeg/python3 yourself)"; SKIP_APT=1
   else warn "not root and sudo missing — system package installs will be skipped"; SKIP_APT=1; fi
 fi
 command -v curl >/dev/null 2>&1 || {
@@ -222,7 +228,7 @@ if [ -n "$SOURCE" ]; then
         *.tar.gz|*.tgz)
           log "downloading tarball: $SOURCE"
           TMPD="$(mktemp -d)"
-          curl -fsSL --retry 3 -o "$TMPD/src.tgz" "$SOURCE"
+          curl -fsL "${CURLV[@]}" --retry 3 -o "$TMPD/src.tgz" "$SOURCE"
           mkdir -p "$TMPD/x" && tar -xzf "$TMPD/src.tgz" -C "$TMPD/x"
           PROJ_TOML="$(find "$TMPD/x" -name pyproject.toml -type f 2>/dev/null | head -n1)"
           [ -n "$PROJ_TOML" ] || die "tarball does not contain a pyproject.toml"
@@ -276,7 +282,7 @@ if [ -z "$PROJECT" ]; then
   log "project not found nearby — cloning $RAFIDAIN_GIT (ref: $REF)"
   INSTALL_DIR="$PWD/rafidain"
   rm -rf "$INSTALL_DIR"
-  if git clone --depth 1 --branch "$REF" "$RAFIDAIN_GIT" "$INSTALL_DIR" 2>/dev/null \
+  if git clone --progress --depth 1 --branch "$REF" "$RAFIDAIN_GIT" "$INSTALL_DIR" 2>/dev/null \
      && is_project_dir "$INSTALL_DIR"; then
     PROJECT="$INSTALL_DIR"
   else
@@ -311,13 +317,13 @@ if [ "$ENGINE" = "seedvc" ]; then
   TORCH_PKGS=("torch==2.6.0" "torchaudio==2.6.0")
   if [ "$GPU_PRESENT" = 1 ]; then
     log "installing ${TORCH_PKGS[*]} from ${TORCH_INDEX##*/} (~2.5 GB, several minutes)"
-    "$PYBIN" -m pip install --no-input "${TORCH_PKGS[@]}" --index-url "$TORCH_INDEX"
+    "$PYBIN" -m pip install --no-input "${PIPV[@]}" "${TORCH_PKGS[@]}" --index-url "$TORCH_INDEX"
   else
     log "installing CPU wheels ${TORCH_PKGS[*]} (small)"
-    "$PYBIN" -m pip install --no-input "${TORCH_PKGS[@]}" --index-url "$TORCH_CPU_INDEX"
+    "$PYBIN" -m pip install --no-input "${PIPV[@]}" "${TORCH_PKGS[@]}" --index-url "$TORCH_CPU_INDEX"
   fi
   verle "$PYV" "3.12" && "$PYBIN" -m pip install -q --no-input "numpy==1.26.4"
-  "$PYBIN" -m pip install -q --no-input "transformers>=4.40,<5" "librosa>=0.10" "soundfile>=0.12" "huggingface-hub>=0.23" "munch>=4.0" "einops>=0.7" "scipy>=1.10" "descript-audio-codec==1.0.0"
+  "$PYBIN" -m pip install --no-input "${PIPV[@]}" "transformers>=4.40,<5" "librosa>=0.10" "soundfile>=0.12" "huggingface-hub>=0.23" "munch>=4.0" "einops>=0.7" "scipy>=1.10" "descript-audio-codec==1.0.0"
   ok "torch/transformers/librosa/soundfile ready"
 else
   ok "mock engine — ML stack skipped entirely (no torch, no checkpoints)"
@@ -328,7 +334,7 @@ step "Fetching the Seed-VC repository (engine code + configs)"
 if [ ! -f "third_party/seed-vc/modules/commons.py" ]; then
   rm -rf third_party/seed-vc
   log "git clone --depth 1 $SEED_VC_GIT"
-  git clone --depth 1 "$SEED_VC_GIT" third_party/seed-vc
+  git clone --progress --depth 1 "$SEED_VC_GIT" third_party/seed-vc
 fi
 [ -f "third_party/seed-vc/configs/hifigan.yml" ] || die "third_party/seed-vc/configs/hifigan.yml missing — clone failed?"
 ok "third_party/seed-vc ready (modules + configs)"
@@ -498,7 +504,7 @@ if [ "$TUNNEL" = 1 ]; then
   if [ -n "$CF_BIN" ]; then
     mkdir -p tools
     if [ ! -x "tools/cloudflared" ]; then
-      curl -fsSL --retry 3 -o tools/cloudflared \
+      curl -fL "${CURLV[@]}" --retry 3 -o tools/cloudflared \
         "https://github.com/cloudflare/cloudflared/releases/latest/download/$CF_BIN"
       chmod +x tools/cloudflared
     fi

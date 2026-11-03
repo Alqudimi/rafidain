@@ -154,7 +154,31 @@ async def main(ws_url, pcm_16k: bytes):
 
 ## 6) ضبط الهجة العراقية
 
-النموذج zero-shot أصلاً، لكن الضبط الدقيق على كلام عراقي يرفع جودة المخرج (طبيعية اللهجة + تشابه المتحدث). مسار جاهز:
+النموذج zero-shot أصلاً، لكن الضبط الدقيق على كلام عراقي يرفع جودة المخرج (طبيعية اللهجة + تشابه المتحدث). 
+
+### أ. المسار الآلي الكامل (سكربتات مستقلة بأمر واحد — curl-bash مباشر)
+
+سكربتات مستقلة تماماً (بيانات + تدريب + حفظ أوزان ذكي، مع أشرطة تقدم حية لكل مرحلة: 
+التنزيلات بالنسبة والسرعة/ETA، والتدريب خطوة-بخطوة) — تُشغّل من المستودع نفسه دون استنساخ مسبق:
+
+```bash
+# Ubuntu 20.04+ (يتطلب NVIDIA GPU للتدريب؛ بدون GPU يجهّز البيئة والبيانات فقط):
+curl -fsSL https://raw.githubusercontent.com/Alqudimi/rafidain/main/seed_vc_iraqi_ubuntu.sh | bash
+
+# Google Colab (خليّة واحدة بعد اختيار GPU T4):
+!curl -fsSL https://raw.githubusercontent.com/Alqudimi/rafidain/main/seed_vc_iraqi_colab.sh | bash
+```
+
+```powershell
+# Windows 10/11 (PowerShell عادي — أمر واحد):
+irm https://raw.githubusercontent.com/Alqudimi/rafidain/main/seed_vc_iraqi_windows.ps1 | iex
+```
+
+> مقابض التحكم (متغيرات بيئة قبل الأمر): `IRAQI_YODAS_HOURS=200|all|0`، `IRAQI_STEPS=3000`، 
+> `IRAQI_SKIP_TRAIN=1` (تجهيز بيانات فقط)، `IRAQI_SKIP_DEPS=1` (إعادة استخدام بيئة جاهزة)، 
+> `IRAQI_DATA_ROOT=...`، `HF_ENDPOINT=...` (مرايا). كل المراحل قابلة للاستئناف بإعادة التشغيل.
+
+### ب. المسار اليدوي (داخل هذا المستودع)
 
 ```bash
 # 1) جهّز البيانات (تحويل/تنظيف/تقطيع 1–30 ثانية + manifest)

@@ -17,6 +17,21 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+try:  # live progress bars (tqdm ships with huggingface-hub)
+    from tqdm import tqdm
+except ImportError:  # graceful fallback: plain counters
+    def tqdm(iterable=None, **kwargs):
+        if iterable is not None:
+            return iterable
+        class _NoBar:
+            def update(self, *_a):
+                pass
+            def set_description(self, *_a):
+                pass
+            def close(self):
+                pass
+        return _NoBar()
+
 FILES = [
     ("Plachta/Seed-VC", "DiT_uvit_tat_xlsr_ema.pth"),
     ("Plachta/Seed-VC", "config_dit_mel_seed_uvit_xlsr_tiny.yml"),
@@ -47,6 +62,14 @@ def prefetch_xlsr() -> bool:
     return True
 
 
+def _human(n: float) -> str:
+    for unit in ("B", "KB", "MB", "GB"):
+        if n < 1024 or unit == "GB":
+            return f"{n:.1f} {unit}"
+        n /= 1024
+    return f"{n:.1f} GB"
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--cache-dir", default="./checkpoints")
@@ -61,10 +84,13 @@ def main() -> int:
 
     from huggingface_hub import hf_hub_download
 
-    for repo_id, filename in FILES:
+    files_bar = tqdm(FILES, desc="checkpoints", unit="file", leave=True)
+    for repo_id, filename in files_bar:
+        files_bar.set_description(f"checkpoints: {repo_id}/{filename}")
         path = hf_hub_download(repo_id=repo_id, filename=filename, cache_dir=str(cache))
         size_mb = Path(path).stat().st_size / 1e6
-        print(f"OK  {repo_id}/{filename}  ({size_mb:.1f} MB) -> {path}")
+        print(f"OK  {repo_id}/{filename}  ({_human(size_mb * 1e6)}) -> {path}")
+    files_bar.close()
     if not args.skip_xlsr:
         prefetch_xlsr()
     print("\nAll checkpoints ready.")

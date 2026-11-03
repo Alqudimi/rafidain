@@ -62,6 +62,8 @@ trap 'rc=$?; if [ "$rc" -ne 0 ]; then
         log "Debug re-run:  bash -x <script> <your-args>";
         log "Colab fix:     Runtime ▸ Change runtime type ▸ GPU (T4), then re-run.";
       fi' EXIT
+# live progress on a terminal; quiet when piped/redirected (curl-bash safe)
+if [ -t 1 ]; then PIPV=(--progress-bar on); CURLV=(--progress-bar); else PIPV=(-q); CURLV=(-sS); fi
 STEP_N=0; STEP_T=10
 
 # ----------------------------------------------------------------- arguments
@@ -189,7 +191,7 @@ if [ -n "$SOURCE" ]; then
         *.tar.gz|*.tgz)
           log "downloading tarball: $SOURCE"
           TMPD="$(mktemp -d)"
-          curl -fsSL --retry 3 -o "$TMPD/src.tgz" "$SOURCE"
+          curl -fsL "${CURLV[@]}" --retry 3 -o "$TMPD/src.tgz" "$SOURCE"
           mkdir -p "$TMPD/x" && tar -xzf "$TMPD/src.tgz" -C "$TMPD/x"
           PROJ_TOML="$(find "$TMPD/x" -name pyproject.toml -type f 2>/dev/null | head -n1)"
           [ -n "$PROJ_TOML" ] || die "tarball does not contain a pyproject.toml"
@@ -197,7 +199,7 @@ if [ -n "$SOURCE" ]; then
         *)
           log "git clone: $SOURCE (ref: $REF)"
           rm -rf "$INSTALL_DIR"
-          git clone --depth 1 --branch "$REF" "$SOURCE" "$INSTALL_DIR" ;;
+          git clone --progress --depth 1 --branch "$REF" "$SOURCE" "$INSTALL_DIR" ;;
       esac
       PROJECT="$INSTALL_DIR" ;;
     *)
@@ -243,7 +245,7 @@ if [ -z "$PROJECT" ]; then
   log "project not found nearby — cloning $RAFIDAIN_GIT (ref: $REF)"
   INSTALL_DIR="$PWD/rafidain"
   rm -rf "$INSTALL_DIR"
-  if git clone --depth 1 --branch "$REF" "$RAFIDAIN_GIT" "$INSTALL_DIR" 2>/dev/null \
+  if git clone --progress --depth 1 --branch "$REF" "$RAFIDAIN_GIT" "$INSTALL_DIR" 2>/dev/null \
      && is_project_dir "$INSTALL_DIR"; then
     PROJECT="$INSTALL_DIR"
   else
@@ -259,8 +261,8 @@ ok "project: $PROJECT"
 # ---------------------------------------------------------- [3/10] core deps
 step "Installing core Python dependencies"
 cd "$PROJECT"
-"$PYBIN" -m pip install "${PIP_FLAGS[@]}" -q -r requirements.txt
-"$PYBIN" -m pip install "${PIP_FLAGS[@]}" -q -e ".[dev]"
+"$PYBIN" -m pip install "${PIP_FLAGS[@]}" "${PIPV[@]}" -r requirements.txt
+"$PYBIN" -m pip install "${PIP_FLAGS[@]}" "${PIPV[@]}" -e ".[dev]"
 ok "fastapi/uvicorn/pydantic/soxr/… + dev tooling installed"
 
 # ------------------------------------------------------------ [4/10] ML stack
@@ -285,14 +287,14 @@ if [ "$ENGINE" = "seedvc" ]; then
     TORCH_PKGS=("torch==2.6.0" "torchaudio==2.6.0")
     if [ "$GPU_PRESENT" = 1 ]; then
       log "installing ${TORCH_PKGS[*]} from ${TORCH_INDEX##*/} (~2.5 GB, several minutes)"
-      "$PYBIN" -m pip install "${PIP_FLAGS[@]}" "${TORCH_PKGS[@]}" --index-url "$TORCH_INDEX"
+      "$PYBIN" -m pip install "${PIP_FLAGS[@]}" "${PIPV[@]}" "${TORCH_PKGS[@]}" --index-url "$TORCH_INDEX"
     else
       log "installing CPU wheels ${TORCH_PKGS[*]} (small)"
-      "$PYBIN" -m pip install "${PIP_FLAGS[@]}" "${TORCH_PKGS[@]}" --index-url "$TORCH_CPU_INDEX"
+      "$PYBIN" -m pip install "${PIP_FLAGS[@]}" "${PIPV[@]}" "${TORCH_PKGS[@]}" --index-url "$TORCH_CPU_INDEX"
     fi
-    verle "$PYV" "3.12" && "$PYBIN" -m pip install "${PIP_FLAGS[@]}" -q "numpy==1.26.4"
+    verle "$PYV" "3.12" && "$PYBIN" -m pip install "${PIP_FLAGS[@]}" "${PIPV[@]}" "numpy==1.26.4"
   fi
-  "$PYBIN" -m pip install "${PIP_FLAGS[@]}" -q "transformers>=4.40,<5" "librosa>=0.10" "soundfile>=0.12" "huggingface-hub>=0.23" "munch>=4.0" "einops>=0.7" "scipy>=1.10" "descript-audio-codec==1.0.0"
+  "$PYBIN" -m pip install "${PIP_FLAGS[@]}" "${PIPV[@]}" "transformers>=4.40,<5" "librosa>=0.10" "soundfile>=0.12" "huggingface-hub>=0.23" "munch>=4.0" "einops>=0.7" "scipy>=1.10" "descript-audio-codec==1.0.0"
   ok "torch/transformers/librosa/soundfile ready"
 else
   ok "mock engine — ML stack skipped entirely (no torch, no checkpoints)"
@@ -303,7 +305,7 @@ step "Fetching the Seed-VC repository (engine code + configs)"
 if [ ! -f "third_party/seed-vc/modules/commons.py" ]; then
   rm -rf third_party/seed-vc
   log "git clone --depth 1 $SEED_VC_GIT"
-  git clone --depth 1 "$SEED_VC_GIT" third_party/seed-vc
+  git clone --progress --depth 1 "$SEED_VC_GIT" third_party/seed-vc
 fi
 [ -f "third_party/seed-vc/configs/hifigan.yml" ] || die "third_party/seed-vc/configs/hifigan.yml missing — clone failed?"
 ok "third_party/seed-vc ready (modules + configs)"
@@ -430,7 +432,7 @@ if [ "$NO_TUNNEL" = 0 ]; then
     mkdir -p tools
     if [ ! -x "tools/cloudflared" ]; then
       log "downloading cloudflared ($ARCH)"
-      curl -fsSL --retry 3 -o tools/cloudflared \
+      curl -fL "${CURLV[@]}" --retry 3 -o tools/cloudflared \
         "https://github.com/cloudflare/cloudflared/releases/latest/download/$CF_BIN"
       chmod +x tools/cloudflared
     fi

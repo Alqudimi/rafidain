@@ -2,7 +2,8 @@
 # ============================================================================
 # seed_vc_iraqi_colab.sh - Google Colab edition (use a GPU runtime)
 # In a Colab cell:   !bash seed_vc_iraqi_colab.sh
-# Or piped:          !curl -fsSL <this-script-url> | bash
+# Or piped (one command - bootstraps data + training + export):
+#   !curl -fsSL https://raw.githubusercontent.com/Alqudimi/rafidain/main/seed_vc_iraqi_colab.sh | bash
 # ============================================================================
 set -euo pipefail
 
@@ -14,14 +15,20 @@ echo " All stages are resumable: re-run this script any time to continue."
 echo " Env  : IRAQI_YODAS_HOURS(200|all|0) IRAQI_STEPS(3000) IRAQI_BATCH(2)"
 echo "        IRAQI_SAVE_EVERY(250) IRAQI_SKIP_TRAIN=1 IRAQI_SKIP_SMALL=1"
 echo "        IRAQI_RUN_NAME(iraqi_v1) IRAQI_DATA_ROOT  HF_ENDPOINT(mirror)"
+echo "        IRAQI_SKIP_DEPS=1 (reuse the preinstalled Colab environment)"
 echo "=========================================================================="
 
 say()  { printf '\033[1;36m[iraqi]\033[0m %s\n' "$*"; }
 fail() { printf '\033[1;31m[iraqi][ERROR]\033[0m %s\n' "$*"; exit 1; }
+
+# live pip progress on a terminal; quiet when piped into logs
+if [ -t 1 ]; then PIPV=(--progress-bar on); else PIPV=(-q); fi
 aptdo() {
-  if [ "$(id -u)" -eq 0 ]; then apt-get -qq "$@" >/dev/null 2>&1;
-  elif command -v sudo >/dev/null 2>&1; then sudo apt-get -qq "$@" >/dev/null 2>&1;
-  else echo "[iraqi] (no root/sudo; skipping: apt-get $*)"; return 1; fi
+  # curl-bash safe: never let sudo prompt (a prompt would eat the piped script)
+  if [ "$(id -u)" -eq 0 ]; then apt-get -qq "$@" >/dev/null 2>&1 </dev/null;
+  elif command -v sudo >/dev/null 2>&1 && sudo -n true 2>/dev/null; then
+    sudo -n apt-get -qq "$@" >/dev/null 2>&1 </dev/null;
+  else echo "[iraqi] (no root/passwordless sudo; skipping: apt-get $*)"; return 1; fi
 }
 
 ROOT="${IRAQI_DATA_ROOT:-/content/iraqi_seedvc}"
@@ -58,28 +65,34 @@ say "  ffmpeg: $(ffmpeg -version 2>/dev/null | head -1)"
 # ---------------------------------------------------------------- stage 2
 say "stage 2/8: Python environment + PyTorch 2.4.0 (CUDA 12.1)"
 PY=python3
-$PY -m pip install -q --upgrade pip >/dev/null 2>&1 || true
-if ! $PY -c "import torch; assert torch.__version__.startswith('2.4.')" >/dev/null 2>&1; then
-  say "  installing pinned PyTorch 2.4.0 cu121 (about 2.5 GB) ..."
-  $PY -m pip install -q torch==2.4.0 torchvision==0.19.0 torchaudio==2.4.0 \
-    --index-url https://download.pytorch.org/whl/cu121 \
-    || $PY -m pip install -q torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121 \
-    || fail "PyTorch install failed"
-fi
-$PY -m pip install -q numpy==1.26.4 scipy==1.13.1 librosa==0.10.2 soundfile==0.12.1 munch==4.0.0 einops==0.8.0 transformers==4.46.3 pyyaml tqdm requests pyarrow==17.0.0 huggingface_hub \
-  || $PY -m pip install -q numpy scipy librosa soundfile munch einops transformers pyyaml tqdm requests pyarrow==17.0.0 huggingface_hub \
-  || fail "python dependencies install failed"
-$PY - <<'CHK'
+if [ "${IRAQI_SKIP_DEPS:-0}" = "1" ]; then
+  say "  skipped (IRAQI_SKIP_DEPS=1) - reusing the preinstalled Colab environment"
+  if [ -x "$ROOT/venv/bin/python" ]; then PY="$ROOT/venv/bin/python"; fi
+  say "  using $($PY --version 2>&1)"
+else
+  $PY -m pip install -q --upgrade pip >/dev/null 2>&1 || true
+  if ! $PY -c "import torch; assert torch.__version__.startswith('2.4.')" >/dev/null 2>&1; then
+    say "  installing pinned PyTorch 2.4.0 cu121 (about 2.5 GB) ..."
+    $PY -m pip install "${PIPV[@]}" torch==2.4.0 torchvision==0.19.0 torchaudio==2.4.0 \
+      --index-url https://download.pytorch.org/whl/cu121 \
+      || $PY -m pip install "${PIPV[@]}" torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121 \
+      || fail "PyTorch install failed"
+  fi
+  $PY -m pip install "${PIPV[@]}" numpy==1.26.4 scipy==1.13.1 librosa==0.10.2 soundfile==0.12.1 munch==4.0.0 einops==0.8.0 transformers==4.46.3 pyyaml tqdm requests pyarrow==17.0.0 huggingface_hub \
+    || $PY -m pip install "${PIPV[@]}" numpy scipy librosa soundfile munch einops transformers pyyaml tqdm requests pyarrow==17.0.0 huggingface_hub \
+    || fail "python dependencies install failed"
+  $PY - <<'CHK'
 import torch, transformers, librosa, soundfile, munch, pyarrow, huggingface_hub, yaml
 print("  torch", torch.__version__, "| cuda:", torch.cuda.is_available())
 CHK
+fi
 
 # ---------------------------------------------------------------- stage 3
 say "stage 3/8: Seed-VC repository"
 if [ -d "$ROOT/seed-vc/.git" ]; then
   git -C "$ROOT/seed-vc" pull --ff-only 2>/dev/null || true
 else
-  git clone --depth 1 https://github.com/Plachtaa/seed-vc.git "$ROOT/seed-vc" \
+  git clone --progress --depth 1 https://github.com/Plachtaa/seed-vc.git "$ROOT/seed-vc" \
     || fail "git clone of Seed-VC failed - check network / proxy"
 fi
 [ -f "$ROOT/seed-vc/train.py" ] || fail "Seed-VC repo incomplete"
@@ -144,6 +157,97 @@ TOTAL_CLIP_HOURS = sum(c["du"] for c in CLIPS) / 3600.0
 def log(msg):
     print(f"[iraqi] {msg}", flush=True)
 
+def _is_tty(stream=None):
+    try:
+        return bool((stream or sys.stdout).isatty())
+    except Exception:
+        return False
+
+class Bar:
+    """Live progress bar:  [tag] |####----|  42.3%  n/total unit  rate/s eta 123s  note
+
+    - TTY: renders in place with \\r refresh (plus a background ticker so long
+      downloads keep the bar moving between item completions).
+    - non-TTY (logs): prints one line at most every `sparse` seconds.
+    Thread-safe enough for progress callbacks (GIL-atomic int ops only).
+    """
+    def __init__(self, total, tag="", width=22, unit="", sparse=5.0):
+        self.total = max(int(total or 0), 1)
+        self.n = 0
+        self.tag = tag
+        self.width = width
+        self.unit = unit
+        self.sparse = sparse
+        self.t0 = time.time()
+        self.tty = _is_tty()
+        self.note = ""
+        self._last_print = 0.0
+        self._tick_stop = None
+        self._spin = 0
+
+    def start(self, interval=2.0):
+        """start the background ticker (keeps the bar alive during long items)"""
+        import threading
+        self._tick_stop = threading.Event()
+        bar = self
+        def _tick():
+            while not bar._tick_stop.wait(interval):
+                if bar.tty:
+                    bar._render()
+        threading.Thread(target=_tick, daemon=True).start()
+        return self
+
+    def stop(self):
+        if self._tick_stop is not None:
+            self._tick_stop.set()
+
+    def update(self, inc=1, note=None):
+        self.n += inc
+        if note is not None:
+            self.note = note
+        if self.tty:
+            self._render()
+        elif (time.time() - self._last_print) >= self.sparse or self.n >= self.total:
+            self._print()
+
+    def _render(self):
+        el = max(time.time() - self.t0, 1e-3)
+        rate = self.n / el
+        eta = (self.total - self.n) / rate if rate > 0 else 0.0
+        frac = min(max(self.n / self.total, 0.0), 1.0)
+        filled = int(self.width * frac)
+        bar = "#" * filled + "-" * (self.width - filled)
+        if frac >= 1.0:
+            glyph, pct = "done", "100.0"
+        else:
+            self._spin += 1
+            glyph, pct = "|/-\\"[self._spin % 4], f"{frac * 100:5.1f}"
+        line = (f"\r[{self.tag}] |{bar}| {pct}% {self.n}/{self.total}{self.unit} "
+                f"{rate:6.1f}/s eta {eta:5.0f}s {glyph} {self.note}")
+        sys.stdout.write(line[:118] + " " * 4)
+        sys.stdout.flush()
+
+    def _print(self):
+        self._last_print = time.time()
+        el = max(time.time() - self.t0, 1e-3)
+        rate = self.n / el
+        eta = (self.total - self.n) / rate if rate > 0 else 0.0
+        print(f"[{self.tag}] {self.n}/{self.total}{self.unit} "
+              f"({self.n * 100.0 / self.total:.1f}%) {rate:.1f}/s eta {eta:.0f}s {self.note}",
+              flush=True)
+
+    def close(self, note=None):
+        if note is not None:
+            self.note = note
+        self.stop()
+        if self.tty:
+            self.n = max(self.n, self.total)
+            self._render()
+            sys.stdout.write("\n")
+            sys.stdout.flush()
+        else:
+            self._print()
+
 def hf_url(path):
     """build a resolve URL honoring HF_ENDPOINT (mirror support)"""
     host = os.environ.get("HF_ENDPOINT", "https://huggingface.co").rstrip("/")
@@ -155,12 +259,31 @@ def http_session():
     s.headers.update({"User-Agent": "seed-vc-iraqi-bootstrap/1.0"})
     return s
 
-def fetch_range(sess, url, start, end, retries=4, timeout=600):
+def fetch_range(sess, url, start, end, retries=4, timeout=600, progress=None):
+    """ranged HTTP fetch, streamed in 1 MiB chunks.
+
+    progress(nb) — optional callback, called with the cumulative byte count of
+    the current attempt (drives live download bars)."""
+    want = end - start + 1
     for a in range(retries):
         try:
-            r = sess.get(url, headers={"Range": f"bytes={start}-{end}"}, timeout=timeout)
-            if r.status_code in (200, 206) and len(r.content) == end - start + 1:
-                return r.content
+            r = sess.get(url, headers={"Range": f"bytes={start}-{end}"},
+                         timeout=timeout, stream=True)
+            if r.status_code in (200, 206):
+                buf = bytearray()
+                for chunk in r.iter_content(chunk_size=1 << 20):
+                    if not chunk:
+                        continue
+                    buf.extend(chunk)
+                    if progress is not None:
+                        try:
+                            progress(len(buf))
+                        except Exception:
+                            pass
+                    if len(buf) >= want:
+                        break
+                if len(buf) == want:
+                    return bytes(buf)
         except Exception:
             pass
         time.sleep(min(30, 2 ** a) + random.random() * 2)
@@ -273,11 +396,13 @@ def cmd_small(args):
     os.makedirs(root, exist_ok=True)
     from huggingface_hub import hf_hub_download, snapshot_download
     todo = args.only or ["youssef", "shiekh", "safaa"]
+    sets_bar = Bar(len(todo), tag="small", unit=" sets").start()
     for name in todo:
         if name not in todo:
             continue
         if is_done(root, f"small_{name}"):
             log(f"small/{name}: already done, skipping")
+            sets_bar.update(1, note=f"{name}: cached")
             continue
         outdir = os.path.join(root, "raw", name)
         os.makedirs(outdir, exist_ok=True)
@@ -285,6 +410,7 @@ def cmd_small(args):
             info = SMALL_SETS[name]
             log(f"small/{name}: {info['about']} <- {info['repo']}")
             pqdir = os.path.join(root, "raw", "_parquet", name)
+            part_bar = Bar(len(info["files"]), tag=f"small:{name}", unit=" files").start()
             for part, f in enumerate(info["files"]):
                 p = hf_hub_download(repo_id=info["repo"], filename=f,
                                     repo_type="dataset", local_dir=pqdir)
@@ -294,7 +420,9 @@ def cmd_small(args):
                     if not os.path.exists(dst):
                         open(dst, "wb").write(data)
                     cnt += 1
+                part_bar.update(1, note=f"{cnt} clips <- {os.path.basename(p)}")
                 log(f"small/{name}: {cnt} clips from {os.path.basename(p)}")
+            part_bar.close(note="done")
         elif name == "safaa":
             log(f"small/safaa: 676 Iraqi wavs (single female speaker, TTS-ready chunks)")
             snapshot_download(repo_id=SAFAA_REPO, repo_type="dataset",
@@ -313,7 +441,9 @@ def cmd_small(args):
                             shutil.copyfile(os.path.join(d, fn), dst)
                         cnt += 1
             log(f"small/safaa: {cnt} wav files")
+        sets_bar.update(1, note=f"{name}: done")
         mark_done(root, f"small_{name}")
+    sets_bar.close(note="complete")
     log("small: complete")
 
 # ---------------------------------------------------------------------------
@@ -343,8 +473,9 @@ def cmd_yodas(args):
     chosen, est_h = select_sources(hours, args.limit)
     webm_dir = os.path.join(root, "raw", "yodas_webm")
     os.makedirs(webm_dir, exist_ok=True)
+    total_bytes = sum(OFFS[s]["size"] for s in chosen)
     log(f"yodas: {len(chosen)} source recordings selected (~{est_h:.1f} h of Iraqi clips, "
-        f"~{sum(OFFS[s]['size'] for s in chosen)/1e9:.1f} GB to fetch from espnet/yodas3)")
+        f"~{total_bytes/1e9:.1f} GB to fetch from espnet/yodas3)")
 
     sess = http_session()
     state_path = os.path.join(root, "raw", "yodas_fetch_state.json")
@@ -352,36 +483,50 @@ def cmd_yodas(args):
     if os.path.exists(state_path):
         state = json.load(open(state_path))
 
+    done_bytes = [sum(OFFS[s]["size"] for s in chosen
+                      if os.path.exists(os.path.join(webm_dir, f"{s}.webm"))
+                      and os.path.getsize(os.path.join(webm_dir, f"{s}.webm")) == OFFS[s]["size"])]
+    live = {"bytes": 0}   # bytes streaming right now (approximate, live display only)
+    bar = Bar(len(chosen), tag="yodas", unit=" src").start()
+
     def fetch_one(sid):
         v = OFFS[sid]
         out = os.path.join(webm_dir, f"{sid}.webm")
         if os.path.exists(out) and os.path.getsize(out) == v["size"]:
-            return sid, "skip"
+            return sid, "skip", 0
         url = hf_url(f"data/ar/audio/{v['tar']:04d}.tar")
-        data = fetch_range(sess, url, int(v["off"]), int(v["off"]) + int(v["size"]) - 1)
+        last = [0]
+
+        def prog(nb, last=last):
+            if nb >= last[0]:
+                live["bytes"] += nb - last[0]
+            last[0] = nb
+
+        data = fetch_range(sess, url, int(v["off"]), int(v["off"]) + int(v["size"]) - 1,
+                           progress=prog)
         if data is None:
-            return sid, "fail"
+            return sid, "fail", 0
         open(out, "wb").write(data)
-        return sid, "ok"
+        return sid, "ok", len(data)
 
     ok = skip = fail = 0
     t0 = time.time()
     with ThreadPoolExecutor(max_workers=args.workers) as ex:
         futs = {ex.submit(fetch_one, s): s for s in chosen}
         for n, fut in enumerate(as_completed(futs), 1):
-            sid, res = fut.result()
+            sid, res, size = fut.result()
             if res == "ok":
                 ok += 1
+                done_bytes[0] += size
+                live["bytes"] = max(live["bytes"] - size, 0)
             elif res == "skip":
                 skip += 1
             else:
                 fail += 1
                 state["failed"].append(sid)
-            if n % 25 == 0 or n == len(chosen):
-                el = time.time() - t0
-                got = (ok + skip)
-                log(f"yodas: {n}/{len(chosen)} | fetched {ok} | cached {skip} | failed {fail} | "
-                    f"{el:.0f}s | ~{got*args.workers*60/max(el,1)/args.workers/60:.1f}/min")
+            bar.update(1, note=(f"{(done_bytes[0] + live['bytes'])/1e9:5.2f}/{total_bytes/1e9:.1f} GB"
+                                f" | ok {ok} skip {skip} fail {fail}"))
+    bar.close(note=f"fetched {ok} new, {skip} cached, {fail} failed in {time.time()-t0:.0f}s")
     state["failed"] = sorted(set(state["failed"]))
     json.dump(state, open(state_path, "w"))
     log(f"yodas: done | fetched {ok} new | cached {skip} | failed {fail} "
@@ -474,18 +619,16 @@ def cmd_prep(args):
         jobs = jobs[:args.limit]
     log(f"prep: {len(jobs)} encode jobs -> {args.out}")
     from multiprocessing import Pool
-    t0, done_ok, done_skip, done_fail = time.time(), 0, 0, 0
+    t0, done_ok, done_fail = time.time(), 0, 0
+    bar = Bar(len(jobs), tag="prep", unit=" clips").start()
     with Pool(processes=args.workers) as pool:
         for n, (out, t, okk) in enumerate(pool.imap_unordered(_run_prep_job, jobs, chunksize=16), 1):
             if okk and os.path.exists(out) and os.path.getsize(out) > 1024:
                 done_ok += 1
             else:
                 done_fail += 1
-            if n % 200 == 0 or n == len(jobs):
-                el = time.time() - t0
-                rate = n / max(el, 1)
-                log(f"prep: {n}/{len(jobs)} | ok {done_ok} | fail {done_fail} | "
-                    f"{rate:.1f}/s | eta {(len(jobs)-n)/max(rate,0.01):.0f}s")
+            bar.update(1, note=f"ok {done_ok} | fail {done_fail}")
+    bar.close(note=f"{done_ok} encoded, {done_fail} failed in {time.time()-t0:.0f}s")
     # rebuild index of produced files: merge with previous index (dedupe by file)
     log("prep: indexing outputs ...")
     prev = {}
@@ -548,9 +691,12 @@ def cmd_prefetch(args):
     repo = args.repo
     os.environ["HF_HUB_CACHE"] = os.path.join(repo, "checkpoints", "hf_cache")
     from huggingface_hub import hf_hub_download, snapshot_download
+    items = list(PREFETCH) + [("facebook/wav2vec2-xls-r-300m", "snapshot", "*")]
+    bar = Bar(len(items), tag="prefetch", unit=" ckpt").start()
     for repo_id, rtype, fn in PREFETCH:
         for a in range(3):
             try:
+                bar.note = f"{repo_id}/{fn}"
                 p = hf_hub_download(repo_id=repo_id, filename=fn, repo_type=rtype,
                                     cache_dir=os.path.join(repo, "checkpoints"))
                 log(f"prefetch: {repo_id}/{fn} -> {p}")
@@ -558,8 +704,10 @@ def cmd_prefetch(args):
             except Exception as e:
                 log(f"prefetch retry {a+1} for {repo_id}/{fn}: {e}")
                 time.sleep(3)
+        bar.update(1, note=f"{repo_id}/{fn}")
     for a in range(3):
         try:
+            bar.note = "facebook/wav2vec2-xls-r-300m (~1.27 GB)"
             p = snapshot_download("facebook/wav2vec2-xls-r-300m",
                                   cache_dir=os.path.join(repo, "checkpoints", "hf_cache"))
             log(f"prefetch: facebook/wav2vec2-xls-r-300m -> {p}")
@@ -567,6 +715,8 @@ def cmd_prefetch(args):
         except Exception as e:
             log(f"prefetch retry {a+1} for wav2vec2-xls-r-300m: {e}")
             time.sleep(3)
+    bar.update(1, note="wav2vec2-xls-r-300m")
+    bar.close(note="all checkpoints cached")
 
 # ---------------------------------------------------------------------------
 # export fine-tuned weights
@@ -736,6 +886,18 @@ else
 fi
 
 # ---------------------------------------------------------------- stage 7
+HAVE_RAW=0
+for d in yodas_webm youssef shiekh safaa; do
+  if [ -d "$ROOT/raw/$d" ] && ls "$ROOT/raw/$d"/* >/dev/null 2>&1; then HAVE_RAW=1; fi
+done
+if [ "$HAVE_RAW" = "0" ]; then
+  say "stage 7/8: no raw data found (stages 5/6 skipped) - nothing to prepare"
+  say "  next: re-run without IRAQI_SKIP_SMALL=1 and/or with IRAQI_YODAS_HOURS=200"
+  say "ALL DONE (environment ready; no data was requested)."
+  say "  - seed-vc repo: $SEEDVC"
+  say "  - data root  : $ROOT"
+  exit 0
+fi
 say "stage 7/8: cutting + segmenting + encoding training data (24 kHz mono opus)"
 "$PY" "$PIPE" prep --root "$ROOT" --out "$ROOT/data/iraqi_finetune" --workers "$WORKERS" \
   || fail "preprocessing stage failed (re-run to resume)"
@@ -761,8 +923,10 @@ else
   else
     say "  fresh run: base weights auto-download from Plachta/Seed-VC"
   fi
+  mkdir -p "$RUN_DIR"
+  say "  training console log: $RUN_DIR/train_console.log (live progress below)"
   cd "$SEEDVC"
-  "$PY" train.py \
+  "$PY" -u train.py \
     --config configs/presets/config_dit_mel_seed_uvit_xlsr_tiny.yml \
     --dataset-dir "$DATA_DIR" \
     --run-name "$RUN_NAME" \
@@ -770,7 +934,35 @@ else
     --max-steps "$STEPS" \
     --save-every "$SAVE_EVERY" \
     --num-workers 2 \
-    --gpu 0 || { cd "$ROOT"; fail "training failed - re-run the script to resume from the last checkpoint"; }
+    --gpu 0 > "$RUN_DIR/train_console.log" 2>&1 &
+  TRAIN_PID=$!
+  t0=$(date +%s)
+  last_s=-1
+  while kill -0 "$TRAIN_PID" 2>/dev/null; do
+    s=$(grep -aoE 'step [0-9]+' "$RUN_DIR/train_console.log" 2>/dev/null | tail -1 | grep -aoE '[0-9]+' || true)
+    ep=$(grep -aoE 'epoch [0-9]+' "$RUN_DIR/train_console.log" 2>/dev/null | tail -1 | grep -aoE '[0-9]+' || true)
+    s="${s:-0}"; ep="${ep:-0}"
+    if [ "$s" -ne "$last_s" ]; then
+      last_s=$s
+      el=$(( $(date +%s) - t0 ))
+      if [ "$s" -gt 0 ] && [ "$STEPS" -gt 0 ]; then
+        pct=$(( s * 100 / STEPS )); filled=$(( s * 20 / STEPS ))
+        [ "$filled" -gt 20 ] && filled=20
+        barstr=""
+        k=0; while [ $k -lt $filled ]; do barstr+="#"; k=$((k+1)); done
+        k=$filled; while [ $k -lt 20 ]; do barstr+="-"; k=$((k+1)); done
+        eta=$(( (STEPS - s) * el / s ))
+        printf '\r[train] |%s| %d%% step %s/%s epoch %s eta %ds   ' \
+          "$barstr" "$pct" "$s" "$STEPS" "$ep" "$eta"
+      else
+        printf '\r[train] warming up (epoch %s, %ss elapsed)   ' "$ep" "$el"
+      fi
+    fi
+    sleep 5
+  done
+  printf '\n'
+  wait "$TRAIN_PID" || { cd "$ROOT"; fail "training failed - re-run the script to resume from the last checkpoint (log: $RUN_DIR/train_console.log)"; }
+  cd "$ROOT"
   cd "$ROOT"
   say "  verifying fine-tuned checkpoint with a real inference pass ..."
   "$PY" "$PIPE" verify --repo "$SEEDVC" --run-dir "$RUN_DIR" \

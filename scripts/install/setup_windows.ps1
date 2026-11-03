@@ -1,4 +1,4 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 # ============================================================================
 #  RAFIDAIN — Windows one-shot installer (PowerShell 5.1+)
 #  رافدَين — مثبّت كامل لبيئة ويندوز: تثبيت + تهيئة + تشغيل
@@ -79,7 +79,43 @@ function Invoke-PyQ([string[]]$ArgList) {         # quiet python run; throws on 
     return ($out -join "`n")
 }
 function Get-Http([string]$Url, [string]$OutFile) {
-    Invoke-WebRequest -Uri $Url -OutFile $OutFile -UseBasicParsing
+    # streaming download with a live progress bar (percent + speed + MB)
+    try {
+        $showBar = $false
+        try { $showBar = (-not [Console]::IsOutputRedirected) } catch {}
+        $req = [Net.HttpWebRequest]::Create($Url)
+        $req.AllowAutoRedirect = $true
+        $req.Timeout = 120000
+        $resp = $req.GetResponse()
+        try {
+            $total = [long]$resp.ContentLength
+            $inS = $resp.GetResponseStream()
+            $outS = [IO.File]::Create($OutFile)
+            $buf = New-Object byte[] (1MB)
+            $got = [long]0; $t0 = Get-Date
+            try {
+                while (($n = $inS.Read($buf, 0, $buf.Length)) -gt 0) {
+                    $outS.Write($buf, 0, $n)
+                    $got += $n
+                    if ($showBar -and $total -gt 0) {
+                        $pct = [Math]::Round(100.0 * $got / $total, 1)
+                        $filled = [Math]::Min(20, [int](20 * $got / $total))
+                        $bar = ("#" * $filled) + ("-" * (20 - $filled))
+                        $el = ((Get-Date) - $t0).TotalSeconds
+                        $mbps = $got / 1MB / [Math]::Max($el, 0.1)
+                        Write-Host -NoNewline ("`r[get] |{0}| {1,5}% {2,8:N1}/{3:N1} MB {4,6:N1} MB/s   " -f $bar,$pct,($got/1MB),($total/1MB),$mbps)
+                    }
+                }
+            } finally { $outS.Close(); $inS.Close() }
+            if ($showBar -and $total -gt 0) { Write-Host "" }
+            if ($total -gt 0 -and $got -ne $total) { throw "incomplete download ($got/$total bytes)" }
+        } finally { $resp.Close() }
+    } catch {
+        # fallback: plain Invoke-WebRequest (native console progress)
+        Write-Log ("streaming download failed - falling back to Invoke-WebRequest: " + $_.Exception.Message)
+        $ProgressPreference = "Continue"
+        Invoke-WebRequest -Uri $Url -OutFile $OutFile -UseBasicParsing
+    }
 }
 function Test-ProjectDir([string]$Path) {
     $toml = Join-Path $Path "pyproject.toml"
@@ -268,7 +304,7 @@ try {
             } elseif ($GitExe) {
                 Write-Log "git clone: $Source (ref: $Ref)"
                 if (Test-Path $InstallDir) { Remove-Item $InstallDir -Recurse -Force }
-                $null = Invoke-Native $GitExe.Source @("clone", "--depth", "1", "--branch", $Ref, $Source, $InstallDir)
+                $null = Invoke-Native $GitExe.Source @("clone", "--progress", "--depth", "1", "--branch", $Ref, $Source, $InstallDir)
                 if ($LASTEXITCODE -ne 0) { throw "git clone failed" }
             } elseif ($Source -match "github\.com/([^/]+)/([^/]+?)(\.git)?/?$") {
                 $zipUrl = "https://github.com/" + $Matches[1] + "/" + $Matches[2] + "/archive/refs/heads/" + $Ref + ".zip"
@@ -303,7 +339,7 @@ if (-not $Project) {
     $cloned = $false
     if ($GitExe) {
         if (Test-Path $InstallDir) { Remove-Item $InstallDir -Recurse -Force }
-        $null = Invoke-Native $GitExe.Source @("clone", "--depth", "1", "--branch", $Ref, $RafidainGit, $InstallDir)
+        $null = Invoke-Native $GitExe.Source @("clone", "--progress", "--depth", "1", "--branch", $Ref, $RafidainGit, $InstallDir)
         $cloned = ($LASTEXITCODE -eq 0)
     } else {
         # no git -> GitHub zip archive (extracts to rafidain-<ref>/)
@@ -329,6 +365,10 @@ could not clone $RafidainGit
 Write-Ok ("project: " + $Project)
 Set-Location $Project
 
+# live pip progress in an interactive console; quiet when redirected to logs
+$PipV = @("-q")
+try { if (-not [Console]::IsOutputRedirected) { $PipV = @("--progress-bar", "on") } } catch {}
+
 # ---------------------------------------------- [4/10] venv + core deps
 Write-Step "[4/10] Virtualenv (.venv) + core dependencies"
 $VenvPy = Join-Path $Project ".venv\Scripts\python.exe"
@@ -337,8 +377,8 @@ if (-not (Test-Path $VenvPy)) {
     if ($LASTEXITCODE -ne 0) { Write-Die "python -m venv failed (is the 'py launcher/venv' feature installed?)" }
 }
 Invoke-PyQ @("-m", "pip", "install", "-q", "--upgrade", "pip", "wheel", "setuptools") | Out-Null
-Invoke-PyQ @("-m", "pip", "install", "-q", "--no-input", "-r", "requirements.txt") | Out-Null
-Invoke-PyQ @("-m", "pip", "install", "-q", "--no-input", "-e", ".[dev]") | Out-Null
+Invoke-PyQ @("-m", "pip", "install") + $PipV + @("--no-input", "-r", "requirements.txt") | Out-Null
+Invoke-PyQ @("-m", "pip", "install") + $PipV + @("--no-input", "-e", ".[dev]") | Out-Null
 Write-Ok "virtualenv ready: .venv (fastapi/uvicorn/pydantic/soxr/... + dev tooling)"
 
 # ------------------------------------------------------------- [5/10] ML stack
@@ -350,13 +390,13 @@ if ($Engine -eq "seedvc") {
     $TorchPkgs = @("torch==2.6.0", "torchaudio==2.6.0")
     if ($GpuPresent) {
         Write-Log ("installing " + ($TorchPkgs -join " ") + " from " + $TorchIndex.Split("/")[-1] + " (~2.5 GB, several minutes)")
-        Invoke-Py (@("-m", "pip", "install", "--no-input") + $TorchPkgs + @("--index-url", $TorchIndex))
+        Invoke-Py (@("-m", "pip", "install") + $PipV + @("--no-input") + $TorchPkgs + @("--index-url", $TorchIndex))
     } else {
         Write-Log ("installing CPU wheels " + ($TorchPkgs -join " "))
-        Invoke-Py (@("-m", "pip", "install", "--no-input") + $TorchPkgs + @("--index-url", $TorchCpuIdx))
+        Invoke-Py (@("-m", "pip", "install") + $PipV + @("--no-input") + $TorchPkgs + @("--index-url", $TorchCpuIdx))
     }
-    if ($PyMajorMinor -le "3.12") { Invoke-PyQ @("-m", "pip", "install", "-q", "--no-input", "numpy==1.26.4") | Out-Null }
-    Invoke-PyQ @("-m", "pip", "install", "-q", "--no-input", "transformers>=4.40,<5", "librosa>=0.10", "soundfile>=0.12", "huggingface-hub>=0.23", "munch>=4.0", "einops>=0.7", "scipy>=1.10", "descript-audio-codec==1.0.0") | Out-Null
+    if ($PyMajorMinor -le "3.12") { Invoke-PyQ @("-m", "pip", "install") + $PipV + @("--no-input", "numpy==1.26.4") | Out-Null }
+    Invoke-PyQ @("-m", "pip", "install") + $PipV + @("--no-input", "transformers>=4.40,<5", "librosa>=0.10", "soundfile>=0.12", "huggingface-hub>=0.23", "munch>=4.0", "einops>=0.7", "scipy>=1.10", "descript-audio-codec==1.0.0") | Out-Null
     Write-Ok "torch/transformers/librosa/soundfile ready"
 } else {
     Write-Ok "mock engine - ML stack skipped entirely (no torch, no checkpoints)"
@@ -369,7 +409,7 @@ if (-not (Test-Path (Join-Path $SvDir "modules\commons.py"))) {
     if (Test-Path $SvDir) { Remove-Item $SvDir -Recurse -Force }
     if ($GitExe) {
         Write-Log "git clone --depth 1 $SeedVcGit"
-        $null = Invoke-Native $GitExe.Source @("clone", "--depth", "1", $SeedVcGit, $SvDir)
+        $null = Invoke-Native $GitExe.Source @("clone", "--progress", "--depth", "1", $SeedVcGit, $SvDir)
         if ($LASTEXITCODE -ne 0) { Write-Die "git clone of Seed-VC failed" }
     } else {
         Write-Log "downloading Seed-VC zip (no git)..."

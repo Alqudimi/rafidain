@@ -166,6 +166,42 @@ powershell -ExecutionPolicy Bypass -File setup.ps1 -Source https://github.com/Al
 
 ---
 
+## 5-ب) سكربتات البيانات والتدريب (أمر واحد من المستودع نفسه)
+
+سكربتات الضبط الدقيق مستقلة تماماً عن المستودع (تبني بيئتها الخاصة وتنزّل Seed-VC والبيانات بنفسها)،
+وتحمل **أشرطة تقدم حية** لكل المراحل: تنزيل البيانات (نسبة + غيغابايت متدفقة + سرعة + ETA)،
+التجهيز (مقاطع/ثانية)، وتنزيل نقاط التدريب — وشريط **خطوة-بخطوة للتدريب نفسه** مع loss وepoch وETA.
+
+```bash
+# Ubuntu 20.04/22.04/24.04 (NVIDIA GPU للتدريب؛ بدون GPU: بيئة + بيانات فقط):
+curl -fsSL https://raw.githubusercontent.com/Alqudimi/rafidain/main/seed_vc_iraqi_ubuntu.sh | bash
+```
+
+```python
+# Google Colab (خليّة واحدة بعد اختيار Runtime ▸ GPU T4):
+!curl -fsSL https://raw.githubusercontent.com/Alqudimi/rafidain/main/seed_vc_iraqi_colab.sh | bash
+```
+
+```powershell
+# Windows 10/11 (PowerShell عادي — أمر واحد):
+irm https://raw.githubusercontent.com/Alqudimi/rafidain/main/seed_vc_iraqi_windows.ps1 | iex
+```
+
+مقابض التحكم (متغيرات بيئة قبل الأمر، نفسها للثلاث بيئات):
+
+| المتغير | الافتراضي | الوظيفة |
+|---|---|---|
+| `IRAQI_YODAS_HOURS` | `200` | ساعات اللهجة العراقية من كتالوج YODAS-IQ (`all` = 339h، `0` = تعطيل) |
+| `IRAQI_STEPS` | `3000` | خطوات التدريب |
+| `IRAQI_SKIP_SMALL=1` | — | تخطي المجموعات الصغيرة النظيفة (youssef/shiekh/safaa) |
+| `IRAQI_SKIP_TRAIN=1` | — | تجهيز البيانات فقط دون تدريب |
+| `IRAQI_SKIP_DEPS=1` | — | إعادة استخدام بيئة Python جاهزة (تخطي venv/pip) |
+| `IRAQI_DATA_ROOT` | `~/iraqi_seedvc` | جذر البيانات والأوزان (`/content/iraqi_seedvc` على Colab) |
+
+كل المراحل قابلة للاستئناف: إعادة تشغيل السكربت تكمل من حيث توقف (علامات إنجاز + تخطّي الموجود).
+
+---
+
 ## 6) لماذا `torch==2.6.0` تحديداً؟ (قرار هندسي موثّق)
 
 - مشفّر المحتوى **XLSR** (`facebook/wav2vec2-xls-r-300m`) متوفر على HuggingFace بصيغة `pytorch_model.bin` فقط (بدون safetensors)، وإصدارات transformers الحديثة (≥ 4.53) **ترفض** `torch.load` على ملفات `.bin` مع torch أقدم من 2.6 بسبب CVE-2025-32434 — لذا أي Pin أقدم سيكسر التحميل.
