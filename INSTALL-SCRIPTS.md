@@ -38,18 +38,20 @@
 ### أ. الطريقة المحلية (الأسرع للتجربة)
 
 ```python
-# 1) ارفع rafidain-backend.zip إلى Colab ثم:
-!unzip -q rafidain-backend.zip
+# 1) ارفع zip المستودع (rafidain-main.zip) إلى Colab ثم:
+!unzip -q rafidain-main.zip
 # 2) من قائمة Runtime ▸ Change runtime type ▸ اختر GPU (T4)
 # 3) شغّل:
-!bash rafidain-backend/scripts/install/setup_colab.sh
+!bash rafidain-main/scripts/install/setup_colab.sh
 ```
 
 ### ب. عبر URL (بعد رفع المشروع إلى GitHub — نمط curl-bash)
 
 ```python
-# الخلية الأولى:
-!curl -fsSL https://raw.githubusercontent.com/<USER>/rafidain-backend/main/scripts/install/setup_colab.sh | bash -s -- --source https://github.com/<USER>/rafidain-backend
+# الخلية الأولى (المستودع الرسمي — يستنسخه السكربت تلقائياً إن لم يجده):
+!curl -fsSL https://raw.githubusercontent.com/Alqudimi/rafidain/main/scripts/install/setup_colab.sh | bash
+# أو مع تحديد المصدر صراحةً:
+!curl -fsSL https://raw.githubusercontent.com/Alqudimi/rafidain/main/scripts/install/setup_colab.sh | bash -s -- --source https://github.com/Alqudimi/rafidain
 ```
 
 > عند الاستضافة، يستطيع السكربت استنساخ المشروع تلقائياً؛ كما يدعم `--source <رابط tar.gz>`.
@@ -83,15 +85,17 @@
 ### أ. محلي (المشروع مستخرج بجانبك)
 
 ```bash
-tar -xzf rafidain-backend.tar.gz && cd rafidain-backend
+tar -xzf rafidain.tar.gz && cd rafidain
 bash scripts/install/setup_ubuntu.sh                     # يتكفل بكل شيء
 ```
 
 ### ب. عبر curl-bash (بعد الاستضافة على GitHub)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/<USER>/rafidain-backend/main/scripts/install/setup_ubuntu.sh \
-  | bash -s -- --source https://github.com/<USER>/rafidain-backend
+curl -fsSL https://raw.githubusercontent.com/Alqudimi/rafidain/main/scripts/install/setup_ubuntu.sh \
+  | bash -s -- --source https://github.com/Alqudimi/rafidain
+# أو بدونه — يستنسخ السكربت المستودع الرسمي تلقائياً:
+curl -fsSL https://raw.githubusercontent.com/Alqudimi/rafidain/main/scripts/install/setup_ubuntu.sh | bash
 ```
 
 ### ج. كخدمة نظام systemd (إنتاجي — يتطلب sudo)
@@ -121,7 +125,7 @@ bash scripts/install/setup_ubuntu.sh --tunnel
 
 ```powershell
 # من PowerShell عادي (لا حاجة لصلاحيات مدير) بعد استخراج المشروع:
-cd rafidain-backend
+cd rafidain
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\install\setup_windows.ps1
 ```
 
@@ -140,22 +144,25 @@ netsh advfirewall firewall add rule name="Rafidain 8000" dir=in action=allow pro
 
 ## 5) استضافة السكربتات بنمط curl-bash
 
-1. ارفع مجلد المشروع إلى مستودع GitHub خاص بك (`git init && git add . && git commit -m "rafidain" && git remote add origin <url> && git push`).
-2. روابط السكربتات الجاهزة ستكون:
+1. المشروع مستضاف أصلاً على المستودع الرسمي — ويمكنك استضافة نسختك المعدّلة إلى مستودع GitHub خاص بك (`git init && git add . && git commit -m "rafidain" && git remote add origin <url> && git push`).
+2. روابط السكربتات الرسمية الجاهزة:
 
 ```
-https://raw.githubusercontent.com/<USER>/rafidain-backend/main/scripts/install/setup_colab.sh
-https://raw.githubusercontent.com/<USER>/rafidain-backend/main/scripts/install/setup_ubuntu.sh
+https://raw.githubusercontent.com/Alqudimi/rafidain/main/scripts/install/setup_colab.sh
+https://raw.githubusercontent.com/Alqudimi/rafidain/main/scripts/install/setup_ubuntu.sh
 ```
 
 3. ولنسخة PowerShell على ويندوز (النمط المكافئ لـ curl-bash):
 
 ```powershell
-irm https://raw.githubusercontent.com/<USER>/rafidain-backend/main/scripts/install/setup_windows.ps1 -OutFile setup.ps1
-powershell -ExecutionPolicy Bypass -File setup.ps1 -Source https://github.com/<USER>/rafidain-backend
+irm https://raw.githubusercontent.com/Alqudimi/rafidain/main/scripts/install/setup_windows.ps1 -OutFile setup.ps1
+powershell -ExecutionPolicy Bypass -File setup.ps1          # يستنسخ المستودع الرسمي تلقائياً
+# أو مع تحديد المصدر:
+powershell -ExecutionPolicy Bypass -File setup.ps1 -Source https://github.com/Alqudimi/rafidain
 ```
 
-> يمكن أيضاً استضافة `rafidain-backend.tar.gz` على أي رابط مباشر واستخدام `--source <رابط>`.
+> يمكن أيضاً استضافة `rafidain.tar.gz` على أي رابط مباشر واستخدام `--source <رابط>`.
+> وعند التشغيل بنمط curl-bash بدون مشروع محلي، يستنسخ السكربت المستودع الرسمي `Alqudimi/rafidain` تلقائياً.
 
 ---
 

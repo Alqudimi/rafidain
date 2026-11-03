@@ -6,14 +6,14 @@
 #  Realtime Iraqi-dialect voice cloning on seed-uvit-tat-xlsr-tiny (Seed-VC).
 #
 #  USAGE:
-#    A) Hosted on GitHub (after pushing rafidain-backend to your account):
-#         curl -fsSL https://raw.githubusercontent.com/<USER>/rafidain-backend/main/scripts/install/setup_ubuntu.sh | bash
+#    A) Hosted on GitHub (curl-bash — clones https://github.com/Alqudimi/rafidain):
+#         curl -fsSL https://raw.githubusercontent.com/Alqudimi/rafidain/main/scripts/install/setup_ubuntu.sh | bash
 #       With options through the pipe:
 #         curl -fsSL <url> | bash -s -- --engine seedvc --service
-#    B) Local (script inside the extracted project):
-#         bash rafidain-backend/scripts/install/setup_ubuntu.sh
+#    B) Local (script inside the cloned/extracted project):
+#         bash rafidain/scripts/install/setup_ubuntu.sh
 #    C) Explicit source:
-#         bash setup_ubuntu.sh --source https://github.com/<USER>/rafidain-backend
+#         bash setup_ubuntu.sh --source https://github.com/Alqudimi/rafidain
 #
 #  OPTIONS:
 #    --engine seedvc|mock  engine (default: seedvc when a GPU is present,
@@ -36,6 +36,7 @@ set -Eeuo pipefail
 
 # ----------------------------------------------------------------- constants
 SEED_VC_GIT="https://github.com/Plachtaa/seed-vc"
+RAFIDAIN_GIT="https://github.com/Alqudimi/rafidain"
 TORCH_CPU_INDEX="https://download.pytorch.org/whl/cpu"
 READY_TIMEOUT_S="${RAFIDAIN_READY_TIMEOUT_S:-900}"
 
@@ -216,7 +217,7 @@ PROJECT=""
 if [ -n "$SOURCE" ]; then
   case "$SOURCE" in
     http://*|https://*|git@*)
-      INSTALL_DIR="$PWD/rafidain-backend"
+      INSTALL_DIR="$PWD/rafidain"
       case "$SOURCE" in
         *.tar.gz|*.tgz)
           log "downloading tarball: $SOURCE"
@@ -239,7 +240,7 @@ if [ -n "$SOURCE" ]; then
         case "$SOURCE" in
           *.tar.gz|*.tgz)
             log "extracting local tarball: $SOURCE"
-            INSTALL_DIR="$PWD/rafidain-backend"
+            INSTALL_DIR="$PWD/rafidain"
             TMPD="$(mktemp -d)"
             cp "$SOURCE" "$TMPD/src.tgz"
             mkdir -p "$TMPD/x" && tar -xzf "$TMPD/src.tgz" -C "$TMPD/x"
@@ -255,17 +256,37 @@ if [ -n "$SOURCE" ]; then
   esac
 elif is_project_dir "$PWD"; then
   PROJECT="$PWD"
+elif is_project_dir "$PWD/rafidain"; then
+  PROJECT="$PWD/rafidain"
 elif is_project_dir "$PWD/rafidain-backend"; then
+  # legacy layout (pre-repo zips shipped the project under rafidain-backend/)
   PROJECT="$PWD/rafidain-backend"
+elif is_project_dir "$PWD/rafidain-main" || is_project_dir "$PWD/rafidain-master"; then
+  # GitHub "Download ZIP" extracts to <repo>-<branch>
+  for _d in rafidain-main rafidain-master; do
+    is_project_dir "$PWD/$_d" && PROJECT="$PWD/$_d" && break
+  done
 elif [ -n "$SCRIPT_DIR" ] && is_project_dir "$SCRIPT_DIR"; then
   PROJECT="$SCRIPT_DIR"
 elif [ -n "$SCRIPT_DIR" ] && is_project_dir "$SCRIPT_DIR/../.."; then
   PROJECT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 fi
-[ -n "$PROJECT" ] || die "Rafidain project not found!
-  Fix A (local):  extract rafidain-backend.zip / clone your repo, then re-run from beside it.
-  Fix B (git):    re-run with:  --source https://github.com/<you>/rafidain-backend
-  Fix C (tar):    re-run with:  --source https://…/rafidain-backend.tar.gz"
+if [ -z "$PROJECT" ]; then
+  # curl-bash flow: nothing nearby → clone the official repository
+  log "project not found nearby — cloning $RAFIDAIN_GIT (ref: $REF)"
+  INSTALL_DIR="$PWD/rafidain"
+  rm -rf "$INSTALL_DIR"
+  if git clone --depth 1 --branch "$REF" "$RAFIDAIN_GIT" "$INSTALL_DIR" 2>/dev/null \
+     && is_project_dir "$INSTALL_DIR"; then
+    PROJECT="$INSTALL_DIR"
+  else
+    rm -rf "$INSTALL_DIR"
+    die "could not clone $RAFIDAIN_GIT
+  Fix A (local):  clone this repo / extract its zip next to me, then re-run.
+  Fix B (git):    re-run with:  --source https://github.com/Alqudimi/rafidain
+  Fix C (tar):    re-run with:  --source https://…/rafidain.tar.gz"
+  fi
+fi
 ok "project: $PROJECT"
 cd "$PROJECT"
 

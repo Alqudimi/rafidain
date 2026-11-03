@@ -8,6 +8,8 @@
 #  USAGE (PowerShell / Terminal — normal user, no admin needed):
 #    powershell -NoProfile -ExecutionPolicy Bypass -File setup_windows.ps1
 #    powershell -NoProfile -ExecutionPolicy Bypass -File setup_windows.ps1 -Engine mock -NoTests
+#    # curl-style one-liner (auto-clones https://github.com/Alqudimi/rafidain):
+#    irm https://raw.githubusercontent.com/Alqudimi/rafidain/main/scripts/install/setup_windows.ps1 -OutFile setup.ps1; powershell -ExecutionPolicy Bypass -File setup.ps1
 #
 #  OPTIONS:
 #    -Source <dir|git-url|zip-url>   project source (default: auto-detect local)
@@ -45,6 +47,7 @@ try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch { }
 
 $SeedVcGit   = "https://github.com/Plachtaa/seed-vc"
 $SeedVcZip   = "https://github.com/Plachtaa/seed-vc/archive/refs/heads/main.zip"
+$RafidainGit = "https://github.com/Alqudimi/rafidain"
 $TorchCpuIdx = "https://download.pytorch.org/whl/cpu"
 $ReadyTimeoutS = 900
 
@@ -258,7 +261,7 @@ $Project = ""
 try {
     if ($Source) {
         if ($Source -match "^https?://") {
-            $InstallDir = Join-Path (Get-Location) "rafidain-backend"
+            $InstallDir = Join-Path (Get-Location) "rafidain"
             if ($Source -match "\.zip($|\?)") {
                 Write-Log "downloading project zip: $Source"
                 Get-ProjectFromZip $Source $InstallDir
@@ -276,25 +279,52 @@ try {
         } elseif (Test-Path $Source -PathType Container) {
             $Project = (Resolve-Path $Source).Path
         } elseif (Test-Path $Source -PathType Leaf -and $Source -match "\.zip$") {
-            $InstallDir = Join-Path (Get-Location) "rafidain-backend"
+            $InstallDir = Join-Path (Get-Location) "rafidain"
             Get-ProjectFromZip (Resolve-Path $Source).Path $InstallDir
             $Project = $InstallDir
         } else { throw "-Source not found or unsupported (dir, .zip file, git URL, or zip URL): $Source" }
     } else {
         if (Test-ProjectDir (Get-Location).Path) { $Project = (Get-Location).Path }
-        elseif (Test-ProjectDir (Join-Path (Get-Location) "rafidain-backend")) { $Project = Join-Path (Get-Location) "rafidain-backend" }
+        elseif (Test-ProjectDir (Join-Path (Get-Location) "rafidain")) { $Project = Join-Path (Get-Location) "rafidain" }
+        elseif (Test-ProjectDir (Join-Path (Get-Location) "rafidain-backend")) {
+            # legacy layout (pre-repo zips shipped the project under rafidain-backend/)
+            $Project = Join-Path (Get-Location) "rafidain-backend"
+        }
+        elseif (Test-ProjectDir (Join-Path (Get-Location) "rafidain-main")) { $Project = Join-Path (Get-Location) "rafidain-main" }
+        elseif (Test-ProjectDir (Join-Path (Get-Location) "rafidain-master")) { $Project = Join-Path (Get-Location) "rafidain-master" }
         elseif ($PSScriptRoot -and (Test-ProjectDir $PSScriptRoot)) { $Project = $PSScriptRoot }
         elseif ($PSScriptRoot -and (Test-ProjectDir (Join-Path $PSScriptRoot "..\.."))) { $Project = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path }
     }
 } catch { Write-Die $_.Exception.Message }
 if (-not $Project) {
-    Write-Die @"
+    # curl-style flow: nothing nearby -> clone the official repository
+    Write-Log ("project not found nearby - cloning " + $RafidainGit + " (ref: " + $Ref + ")")
+    $InstallDir = Join-Path (Get-Location) "rafidain"
+    $cloned = $false
+    if ($GitExe) {
+        if (Test-Path $InstallDir) { Remove-Item $InstallDir -Recurse -Force }
+        $null = Invoke-Native $GitExe.Source @("clone", "--depth", "1", "--branch", $Ref, $RafidainGit, $InstallDir)
+        $cloned = ($LASTEXITCODE -eq 0)
+    } else {
+        # no git -> GitHub zip archive (extracts to rafidain-<ref>/)
+        $zipUrl = $RafidainGit + "/archive/refs/heads/" + $Ref + ".zip"
+        try {
+            Get-ProjectFromZip $zipUrl $InstallDir
+            $cloned = $true
+        } catch { $cloned = $false }
+    }
+    if ($cloned -and (Test-ProjectDir $InstallDir)) {
+        $Project = $InstallDir
+    } else {
+        if (Test-Path $InstallDir) { Remove-Item $InstallDir -Recurse -Force -ErrorAction SilentlyContinue }
+        Write-Die @"
 
-Rafidain project not found!   /   لم يتم العثور على المشروع
-  Fix A (local):  extract rafidain-backend.zip next to this script, then re-run.
-  Fix B (git):    re-run with:  -Source https://github.com/<you>/rafidain-backend
-  Fix C (zip):    re-run with:  -Source https://host/rafidain-backend.zip
+could not clone $RafidainGit
+  Fix A (local):  clone this repo / extract its zip next to this script, then re-run.
+  Fix B (git):    re-run with:  -Source https://github.com/Alqudimi/rafidain
+  Fix C (zip):    re-run with:  -Source https://host/rafidain.zip
 "@
+    }
 }
 Write-Ok ("project: " + $Project)
 Set-Location $Project

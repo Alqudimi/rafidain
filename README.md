@@ -46,6 +46,10 @@ REST (voices/sessions/finetune)          WebSocket (البث اللحظي)
 
 ## 3) البدء السريع
 
+```bash
+git clone https://github.com/Alqudimi/rafidain && cd rafidain
+```
+
 > **أسهل طريقة — المثبّتات الجاهزة** (`scripts/install/`): تثبيت + تهيئة + تشغيل كامل بأمر واحد
 > لثلاث بيئات. التفاصيل الكاملة وخيارات الاستضافة في `INSTALL-SCRIPTS.md`.
 >
@@ -67,7 +71,7 @@ REST (voices/sessions/finetune)          WebSocket (البث اللحظي)
 ### أ. تجربة فورية بدون GPU (المحرك الوهمي — دقيقتان)
 
 ```bash
-cd rafidain-backend
+cd rafidain
 make install-dev          # المتطلبات الخفيفة فقط (بدون torch)
 make serve-mock           # يشغّل الخادم على :8000 بالمحرك الوهمي
 # في طرفية ثانية:
@@ -187,7 +191,7 @@ make bench       # قياس RTF/زمن الكتلة على جهازك الفعل
 ## 8) هيكل المشروع
 
 ```
-rafidain-backend/
+rafidain/                        # جذر المستودع (github.com/Alqudimi/rafidain)
 ├── rafidain/                     # حزمة الخدمة
 │   ├── core/                     # config, logging, errors
 │   ├── domain/                   # كيانات + منافذ (Ports) — بلا أي I/O
@@ -198,10 +202,13 @@ rafidain-backend/
 │   └── main.py                   # مصنع التطبيق + Lifespan
 ├── finetune/                     # تجهيز بيانات عراقية + غلاف التدريب + إعدادات
 ├── evaluation/                   # تقييم الجودة + قياس الأداء اللحظي
-├── scripts/                      # تنزيل النماذج + عميل دخان كامل
-├── tests/                        # وحدات + تكامل (36)
+├── scripts/                      # تنزيل النماذج + عميل دخان + مثبّتات البيئات الثلاث
+├── tests/                        # وحدات + تكامل (42)
 ├── docker/                       # Dockerfile (base/full) + docker-compose
-└── .github/workflows/ci.yml      # lint + tests + smoke
+├── .github/workflows/ci.yml      # lint + tests + smoke
+├── seed_vc_iraqi_colab.sh        # تنزيل بيانات اللهجة العراقية + التدريب (Colab)
+├── seed_vc_iraqi_ubuntu.sh       # تنزيل بيانات اللهجة العراقية + التدريب (Ubuntu)
+└── seed_vc_iraqi_windows.ps1     # تنزيل بيانات اللهجة العراقية + التدريب (Windows)
 ```
 
 ## 9) الأمان والأخلاقيات ⚠️
