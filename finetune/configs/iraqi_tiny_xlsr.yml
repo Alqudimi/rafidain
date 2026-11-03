@@ -1,0 +1,29 @@
+# ============================================================================
+# Iraqi-dialect fine-tuning — preset notes (seed-uvit-tat-xlsr-tiny)
+# ============================================================================
+# The *effective* training configuration is the official upstream preset:
+#     <SEED_VC_ROOT>/configs/presets/config_dit_mel_seed_uvit_xlsr_tiny.yml
+# finetune/run_finetune.py copies it, guarantees
+#     pretrained_model: DiT_uvit_tat_xlsr_ema.pth
+# and passes the CLI knobs documented below. Keeping a single source of truth
+# upstream avoids silent drift when the repo updates.
+#
+# ----------------------------- validated recipe -----------------------------
+# run_name:            iraqi_v1
+# dataset:             22.05 kHz mono WAV, 1-30 s/utt (see prepare_dataset.py)
+# batch_size:          2 (T4/16G) .. 4 (A10G/24G)
+# max_steps:           500   - per-target-speaker enhancement (fast, ~10 min T4)
+#                       2000 - dialect-adaptation across many Iraqi speakers
+# save_every:          250   - keep intermediate checkpoints for A/B evaluation
+# base_lr (upstream):  1e-5  - warmup 0; do NOT raise for 25M-param models
+# gpu:                 0
+#
+# After training, evaluate before deploying:
+#   python evaluation/evaluate_conversion.py --source S.wav --reference R.wav \
+#       --converted C.wav
+#   python evaluation/benchmark_stream.py --profile balanced
+#
+# Deploy the adapted checkpoint with:
+#   RAFIDAIN__ENGINE__LOCAL_CHECKPOINT=runs/iraqi_v1/ft_model.pth
+#   RAFIDAIN__ENGINE__LOCAL_CONFIG=runs/iraqi_v1/config_patched.yml
+# ============================================================================

@@ -1,0 +1,92 @@
+# ============================================================================
+# Rafidain — docker compose (GPU inference + Redis + optional finetune worker)
+#   docker compose -f docker/docker-compose.yml up -d
+# ============================================================================
+
+services:
+  api:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      target: full
+    image: rafidain/api:latest
+    container_name: rafidain-api
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      RAFIDAIN__LOG_LEVEL: INFO
+      RAFIDAIN__REDIS_URL: redis://redis:6379/0
+      # API keys as a JSON array — REQUIRED in production, e.g. export RAFIDAIN__API_KEYS='["key-1"]':
+      RAFIDAIN__API_KEYS: ${RAFIDAIN__API_KEYS:-[]}
+      RAFIDAIN__DEFAULT_PROFILE: balanced
+      SEED_VC_ROOT: /opt/seed-vc
+    volumes:
+      - rafidain-data:/srv/data
+      - rafidain-checkpoints:/srv/checkpoints
+      # Mount locally fine-tuned Iraqi checkpoints here and set:
+      # RAFIDAIN__ENGINE__LOCAL_CHECKPOINT: /srv/checkpoints/iraqi_v1/ft_model.pth
+    depends_on:
+      redis:
+        condition: service_healthy
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/readyz"]
+      interval: 30s
+      timeout: 10s
+      start_period: 180s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: rafidain-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - rafidain-redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # Optional: dedicated finetune worker node (GPU).
+  #   docker compose --profile finetune up -d
+  finetune-worker:
+    profiles: ["finetune"]
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      target: full
+    image: rafidain/api:latest
+    container_name: rafidain-finetune
+    restart: unless-stopped
+    command: ["python", "-m", "rafidain.workers.finetune_worker"]
+    environment:
+      RAFIDAIN__REDIS_URL: redis://redis:6379/0
+      SEED_VC_ROOT: /opt/seed-vc
+    volumes:
+      - rafidain-checkpoints:/srv/checkpoints
+      - ${RAFIDAIN_DATASETS_DIR:-./datasets}:/srv/datasets
+      - ${RAFIDAIN_RUNS_DIR:-./runs}:/srv/rafidain/runs
+    depends_on:
+      redis:
+        condition: service_healthy
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+volumes:
+  rafidain-data:
+  rafidain-checkpoints:
+  rafidain-redis:

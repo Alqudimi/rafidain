@@ -1,0 +1,16 @@
+# ---------------------------------------------------------------------------
+# Rafidain — core runtime dependencies (lightweight, no torch needed).
+# The heavy ML stack lives in requirements-finetune.txt.
+# ---------------------------------------------------------------------------
+
+fastapi>=0.110
+uvicorn[standard]>=0.29
+pydantic>=2.6
+pydantic-settings>=2.2
+python-dotenv>=1.0
+numpy>=1.26
+soxr>=0.4
+python-multipart>=0.0.9
+prometheus-client>=0.20
+redis>=5.0
+PyYAML>=6.0

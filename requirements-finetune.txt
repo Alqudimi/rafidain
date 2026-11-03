@@ -1,0 +1,25 @@
+# ---------------------------------------------------------------------------
+# Heavy ML stack for: Seed-VC engine, Iraqi-dialect fine-tuning, evaluation.
+# The Seed-VC repository itself is installed separately (see Makefile target
+# `make seedvc`) because it is not published on PyPI.
+#
+# torch >= 2.6 is REQUIRED: XLSR (facebook/wav2vec2-xls-r-300m) ships only
+# pytorch_model.bin, and modern transformers enforce the CVE-2025-32434 fix
+# that refuses torch.load() on .bin checkpoints with older torch. Seed-VC's
+# own .pth files additionally rely on the classic pickle path — export
+# TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD=1 (the install scripts and run_server.* do).
+#
+# CUDA wheel example:
+#   pip install torch==2.6.0 torchaudio==2.6.0 --index-url https://download.pytorch.org/whl/cu124
+# ---------------------------------------------------------------------------
+torch>=2.6
+torchaudio>=2.6
+transformers>=4.40,<5
+librosa>=0.10
+soundfile>=0.12
+huggingface-hub>=0.23
+# seed-vc runtime imports (modules/commons.py, length_regulator.py, …):
+munch>=4.0
+einops>=0.7
+scipy>=1.10
+descript-audio-codec==1.0.0

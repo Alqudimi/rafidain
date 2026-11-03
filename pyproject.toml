@@ -1,0 +1,70 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rafidain"
+version = "0.1.0"
+description = "Real-time Iraqi-Arabic voice-conversion backend built on Seed-VC (seed-uvit-tat-xlsr-tiny)"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.29",
+    "pydantic>=2.6",
+    "pydantic-settings>=2.2",
+    "python-dotenv>=1.0",
+    "numpy>=1.26",
+    "soxr>=0.4",
+    "python-multipart>=0.0.9",
+    "prometheus-client>=0.20",
+    "redis>=5.0",
+    "PyYAML>=6.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "httpx>=0.27",
+    "ruff>=0.4",
+    "mypy>=1.9",
+]
+# Heavy ML stack used by the Seed-VC engine, fine-tuning and evaluation.
+finetune = [
+    "torch>=2.1",
+    "torchaudio>=2.1",
+    "transformers>=4.40",
+    "librosa>=0.10",
+    "soundfile>=0.12",
+    "huggingface-hub>=0.23",
+]
+vad = ["webrtcvad>=2.0.10"]
+
+[tool.setuptools.packages.find]
+include = ["rafidain*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+markers = [
+    "gpu: tests that require the real Seed-VC model and a GPU (deselected by default)",
+]
+addopts = "-m 'not gpu'"
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP", "B", "C4", "SIM", "RET"]
+ignore = [
+    "B008",  # FastAPI uses Depends() in parameter defaults by design.
+    "SIM108",  # keep explicit if/else for readability in state machines.
+]
+
+[tool.mypy]
+python_version = "3.10"
+ignore_missing_imports = true
+warn_unused_ignores = false
+check_untyped_defs = true
