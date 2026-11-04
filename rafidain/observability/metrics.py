@@ -62,6 +62,12 @@ def metrics() -> dict[str, Any]:
                 "Backpressure overflow events",
                 registry=_REGISTRY,
             ),
+            "conversions_total": Counter(
+                "rafidain_file_conversions_total",
+                "Completed file-based (audio-to-audio) conversions",
+                labelnames=("profile",),
+                registry=_REGISTRY,
+            ),
         }
     return _METRICS
 

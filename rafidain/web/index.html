@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>رافدَين — لوحة التحكم بالتحويل الصوتي اللحظي</title>
+  <meta name="description" content="تحويل صوت لحظي (Audio-to-Audio) باللهجة العراقية — بث مباشر من الميكروفون أو تحويل ملفات" />
+  <link rel="stylesheet" href="style.css" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%8E%99%EF%B8%8F%3C/text%3E%3C/svg%3E" />
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <span class="logo">🎙️</span>
+    <div>
+      <h1>رافدَين <small>Rafidain</small></h1>
+      <p>تحويل صوت لحظي باللهجة العراقية · seed-uvit-tat-xlsr-tiny</p>
+    </div>
+  </div>
+  <div class="chips">
+    <span class="chip" id="chip-server"><i class="dot"></i> غير متصل</span>
+    <span class="chip" id="chip-engine"><i class="dot"></i> المحرك؟</span>
+    <span class="chip" id="chip-stream"><i class="dot"></i> لا يوجد بث</span>
+  </div>
+</header>
+
+<!-- API key bar -->
+<section class="card keybar">
+  <label for="api-key">مفتاح API</label>
+  <input type="password" id="api-key" placeholder="X-API-Key (اتركه فارغاً إن كانت المصادقة معطّلة)" autocomplete="off" />
+  <button id="btn-connect" class="btn primary">اتصال</button>
+  <button id="btn-info" class="btn ghost" title="معلومات النظام">ℹ معلومات</button>
+  <span id="key-status" class="muted"></span>
+</section>
+
+<main class="tabs" data-tab="live">
+  <nav class="tabbar">
+    <button class="tab active" data-tab="live">📡 بث لحظي (ميكروفون)</button>
+    <button class="tab" data-tab="file">📁 تحويل ملف</button>
+    <button class="tab" data-tab="voices">🎭 الأصوات المستهدفة</button>
+    <button class="tab" data-tab="ops">⚙ الجلسات والمهام</button>
+  </nav>
+
+  <!-- ============================ LIVE ============================ -->
+  <section class="tabpanel" id="panel-live">
+    <div class="grid2">
+      <div class="card">
+        <h3>إعداد البث</h3>
+        <div class="field">
+          <label>الصوت المستهدف (استنساخ صوته)</label>
+          <div class="row">
+            <select id="live-voice" class="grow"></select>
+            <button id="btn-refresh-voices-live" class="btn ghost" title="تحديث القائمة">↻</button>
+          </div>
+        </div>
+        <div class="field">
+          <label>ملف الأداء (Latency Profile)</label>
+          <select id="live-profile">
+            <option value="ultra_low">أدنى زمن وصول (ultra_low)</option>
+            <option value="balanced" selected>متوازن ≈430ms (balanced)</option>
+            <option value="quality">أعلى جودة — غير تفاعلي (quality)</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>الميكروفون</label>
+          <div class="row">
+            <select id="mic-select" class="grow"></select>
+            <button id="btn-refresh-mics" class="btn ghost" title="تحديث الأجهزة">↻</button>
+          </div>
+        </div>
+        <div class="field">
+          <label class="check"><input type="checkbox" id="live-monitor" checked />
+            سماع صوتي المحوَّل أثناء البث (سماعات موصى بها لمنع الصدى)</label>
+        </div>
+        <div class="controls">
+          <button id="btn-start" class="btn primary big">▶ بدء البث</button>
+          <button id="btn-pause" class="btn" disabled>⏸ إيقاف مؤقت</button>
+          <button id="btn-stop" class="btn danger" disabled>⏹ إنهاء</button>
+        </div>
+        <p class="muted small" id="live-hint">
+          اضغط «بدء البث» ثم تحدث — يعود صوتك بصوت الهدف بعد ~نصف ثانية (حسب الملف والعتاد).
+        </p>
+      </div>
+
+      <div class="card">
+        <h3>مؤشرات لحظية</h3>
+        <div class="meters">
+          <div class="meter"><span>دخل الميكروفون</span><div class="bar"><i id="meter-in"></i></div></div>
+          <div class="meter"><span>الخرج المحوَّل</span><div class="bar"><i id="meter-out"></i></div></div>
+        </div>
+        <div class="stats-grid">
+          <div><b id="st-uptime">—</b><span>مدة البث</span></div>
+          <div><b id="st-blocks">—</b><span>كتل صوتية</span></div>
+          <div><b id="st-rtf">—</b><span>معامل الواقعية RTF</span></div>
+          <div><b id="st-latency">—</b><span>زمن المعالجة/كتلة</span></div>
+          <div><b id="st-out-queued">—</b><span>طابور الخرج</span></div>
+          <div><b id="st-lost">—</b><span>تجاوزات/فقد</span></div>
+        </div>
+        <div class="logbox" id="live-log"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================ FILE ============================ -->
+  <section class="tabpanel hidden" id="panel-file">
+    <div class="grid2">
+      <div class="card">
+        <h3>الملف المصدر (صوتك)</h3>
+        <div class="drop" id="drop-source">
+          <input type="file" id="file-source" accept="audio/*,.wav,.mp3,.flac,.ogg,.m4a,.opus,.webm" hidden />
+          <p>🖱️ اسحب الملف هنا أو <u>اختر ملفاً</u></p>
+          <p class="muted small">WAV / MP3 / FLAC / OGG / M4A — حتى ٥ دقائق</p>
+          <p class="muted small" id="source-name"></p>
+        </div>
+        <div class="audio-preview"><audio id="source-audio" controls hidden></audio></div>
+
+        <h3>صوت الهدف</h3>
+        <div class="field">
+          <label class="check"><input type="radio" name="file-target" value="voice" checked />
+            صوت مسجَّل في القائمة</label>
+          <div class="row">
+            <select id="file-voice" class="grow"></select>
+            <button id="btn-refresh-voices-file" class="btn ghost">↻</button>
+          </div>
+        </div>
+        <div class="field">
+          <label class="check"><input type="radio" name="file-target" value="reference" />
+            رفع مرجع صوتي جديد (١–٣٠ ثانية)</label>
+          <input type="file" id="file-reference" accept="audio/*" disabled />
+          <p class="muted small" id="reference-name"></p>
+        </div>
+        <div class="field">
+          <label>ملف الأداء</label>
+          <select id="file-profile">
+            <option value="ultra_low">أدنى زمن وصول</option>
+            <option value="balanced">متوازن</option>
+            <option value="quality" selected>أعلى جودة (موصى به للملفات)</option>
+          </select>
+        </div>
+        <div class="controls">
+          <button id="btn-convert" class="btn primary big" disabled>⤓ حوِّل الآن</button>
+        </div>
+        <div class="progress hidden" id="convert-progress"><i></i><span>٠٪</span></div>
+      </div>
+
+      <div class="card">
+        <h3>النتيجة المحوَّلة</h3>
+        <div class="placeholder" id="result-placeholder">لا توجد نتيجة بعد</div>
+        <div class="result hidden" id="result-box">
+          <audio id="result-audio" controls></audio>
+          <div class="stats-grid">
+            <div><b id="cv-seconds">—</b><span>المدة (ث)</span></div>
+            <div><b id="cv-elapsed">—</b><span>زمن التحويل (ث)</span></div>
+            <div><b id="cv-rtf">—</b><span>RTF</span></div>
+            <div><b id="cv-rate">—</b><span>تردد العينة</span></div>
+          </div>
+          <a id="result-download" class="btn" download="rafidain_converted.wav">⬇ تنزيل WAV</a>
+        </div>
+        <div class="logbox" id="file-log"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================ VOICES ============================ -->
+  <section class="tabpanel hidden" id="panel-voices">
+    <div class="grid2">
+      <div class="card">
+        <h3>تسجيل صوت مستهدف جديد</h3>
+        <p class="muted small">ارفع ١–٣٠ ثانية من كلام واضح وصافٍ لصاحب الصوت المطلوب استنساخه.</p>
+        <div class="field"><label>الاسم (اختياري)</label>
+          <input type="text" id="voice-name" placeholder="مثال: صوت أستاذ يوسف" /></div>
+        <div class="drop small" id="drop-voice">
+          <input type="file" id="voice-file" accept="audio/*" hidden />
+          <p>🖱️ اسحب ملف المرجع أو <u>اختر ملفاً</u></p>
+          <p class="muted small" id="voice-file-name"></p>
+        </div>
+        <div class="audio-preview"><audio id="voice-audio" controls hidden></audio></div>
+        <div class="controls">
+          <button id="btn-register-voice" class="btn primary" disabled>＋ تسجيل الصوت</button>
+        </div>
+      </div>
+      <div class="card">
+        <h3>الأصوات المسجَّلة <button id="btn-refresh-voices" class="btn ghost small-btn">↻</button></h3>
+        <ul class="voicelist" id="voice-list"></ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================ OPS ============================ -->
+  <section class="tabpanel hidden" id="panel-ops">
+    <div class="grid2">
+      <div class="card">
+        <h3>الجلسات النشطة <button id="btn-refresh-sessions" class="btn ghost small-btn">↻</button></h3>
+        <ul class="sessionlist" id="session-list"></ul>
+        <h3>معلومات النظام</h3>
+        <pre id="sysinfo" class="sysinfo">—</pre>
+      </div>
+      <div class="card">
+        <h3>مهام التدريب (Fine-tuning Jobs)</h3>
+        <div class="row">
+          <input type="text" id="job-id" class="grow" placeholder="معرّف المهمة job_id" />
+          <button id="btn-job-get" class="btn">جلب الحالة</button>
+        </div>
+        <pre id="job-info" class="sysinfo">—</pre>
+        <div class="controls">
+          <button id="btn-job-cancel" class="btn danger">إلغاء المهمة</button>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <span>رافدَين — نظام تحويل الصوت اللحظي للهجة العراقية</span>
+  <span class="muted">REST + WebSocket · FastAPI · Seed-VC</span>
+  <a href="/docs" target="_blank" rel="noopener">توثيق API ↗</a>
+</footer>
+
+<div id="toast" class="toast hidden"></div>
+<script src="app.js"></script>
+</body>
+</html>

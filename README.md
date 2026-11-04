@@ -9,9 +9,8 @@
 | النموذج | seed-uvit-tat-xlsr-tiny (25M باراميتر، 22050Hz، مشفّر محتوى XLSR-large، فوكودر HiFT) |
 | زمن الوصول الحرجي | **~430ms** شاملاً الاستدلال (قياس منشور رسمياً للنموذج نفسه بنفس إعدادات البروفايل `balanced`) |
 | بروتوكول النقل | REST لدورة الحياة + WebSocket للصوت اللحظي (PCM s16le أحادي 16kHz) |
-| لغة التنفيذ | Python 3.10–3.12 / FastAPI / asyncio — إدارة بيئة **uv مقفولة** (`uv.lock`) |
-| واجهة الويب | لوحة تحكم عربية RTL على `/web` (Gradio) + صفحة بث حي `/live` عبر WS الأصلي — [WEBUI.md](WEBUI.md) |
-| الاختبارات | 95 اختباراً (وحدات + تكامل كامل عبر WebSocket) — كلها تمر بدون GPU |
+| لغة التنفيذ | Python 3.10+ / FastAPI / asyncio |
+| الاختبارات | 42 اختباراً (وحدات + تكامل كامل عبر WebSocket) — كلها تمر بدون GPU |
 
 ---
 
@@ -51,40 +50,44 @@ REST (voices/sessions/finetune)          WebSocket (البث اللحظي)
 git clone https://github.com/Alqudimi/rafidain && cd rafidain
 ```
 
-> **الطريق الأساسي — uv + المكتشف الذكي** (لينكس / ماك / ويندوز / WSL / Colab):
-> يكتشف النظام والكرت وإصدار CUDA، يثبّت uv إن غاب، يزامن البيئة **المقفولة**
-> (`uv.lock` يثبّت كل متغيرات torch)، ينزّل النقاط، يرفع الخادم + واجهة الويب،
-> ويفتح نفقاً عاماً مجانياً — بأمر واحد:
+> **أسهل طريقة — المثبّتات الجاهزة** (`scripts/install/`): تثبيت + تهيئة + تشغيل كامل بأمر واحد
+> لثلاث بيئات. التفاصيل الكاملة وخيارات الاستضافة في `INSTALL-SCRIPTS.md`.
 >
 > ```bash
-> bash scripts/install/setup_uv.sh                      # أو curl-bash — انظر INSTALL-SCRIPTS.md
-> make web-tunnel                                       # لاحقاً: نفس الأمر بسطر واحد
+> # Google Colab (خليّة واحدة، بعد اختيار GPU T4):
+> !bash scripts/install/setup_colab.sh            # أو عبر URL — انظر INSTALL-SCRIPTS.md
+>
+> # Ubuntu / Debian (يستخدم venv، ويكتشف GPU تلقائياً، ودعم systemd عبر --service):
+> bash scripts/install/setup_ubuntu.sh            # أو: curl -fsSL <url> | bash -s -- --service
+>
+> # Windows 10/11 (PowerShell عادي بلا صلاحيات مدير):
+> powershell -NoProfile -ExecutionPolicy Bypass -File scripts\install\setup_windows.ps1
 > ```
 >
-> المسار الكامل بلا GPU (المحرك الوهمي — دقيقتان): `make install-mock && make web-mock`.
-> المثبّتات القديمة (pip) ما زالت متاحة في `scripts/install/` للتوافق الرجعي.
+> السكربتات تكتشف كل شيء تلقائياً (GPU/CPU، إصدار CUDA، Python، ffmpeg)، تثبّت الـ Pin
+> الموثّق `torch==2.6.0`، تنزّل النقاط، تولّد `.env` مع مفتاح API عشوائي، تُشغّل الاختبارات
+> الـ 42، ترفع الخادم، وتطبع روابط التجربة — وعلى Colab تفتح نفقاً عاماً `trycloudflare.com`.
 
 ### أ. تجربة فورية بدون GPU (المحرك الوهمي — دقيقتان)
 
 ```bash
 cd rafidain
-make install-mock        # uv + الحزمة الخفيفة فقط (بدون torch) — يثبّت uv إن لم يوجد
-make web-mock            # يشغّل الخادم + لوحة التحكم /web + صفحة البث /live
-# في طرفية ثانية (أو من المتصفح مباشرة):
-uv run python scripts/smoke_ws_client.py --url http://127.0.0.1:8000 --seconds 3
+make install-dev          # المتطلبات الخفيفة فقط (بدون torch)
+make serve-mock           # يشغّل الخادم على :8000 بالمحرك الوهمي
+# في طرفية ثانية:
+python scripts/smoke_ws_client.py --url http://127.0.0.1:8000 --seconds 3
 ```
 
-الواجهة التفاعلية: `http://127.0.0.1:8000/web` — والبث الحي: `http://127.0.0.1:8000/live` (انظر **[WEBUI.md](WEBUI.md)**).
+الوثائق التفاعلية: `http://127.0.0.1:8000/docs`
 
 ### ب. التشغيل الإنتاجي (GPU)
 
 ```bash
-make install             # يكتشف GPU/CUDA تلقائياً ويقفل المتغير المناسب (cu118/cu124/cu126)
-make seedvc              # استنساخ مستودع Seed-VC
-make download-models     # تنزيل النقاط من HuggingFace مسبقاً (~1.5GB)
-cp .env.example .env     # ثم عدّل القيم (مفتاح API إلزامي خارج التطوير)
-make web                 # الخادم + واجهة الويب
-make tunnel              # نفق عام مجاني trycloudflare.com (أو: make web-tunnel للاثنين معاً)
+make seedvc                                   # استنساخ مستودع Seed-VC
+pip install -r requirements-finetune.txt      # torch/transformers/... (اختر عجلة CUDA المناسبة)
+make download-models                          # تنزيل النقاط من HuggingFace مسبقاً
+cp .env.example .env                          # ثم عدّل القيم
+make serve                                    # uvicorn بالمحرك الحقيقي
 ```
 
 > متغيرات التشغيل الحرجة: `RAFIDAIN__ENGINE__DEVICE=cuda` و `RAFIDAIN__API_KEYS=["<مفتاحك>"]` (صيغة JSON؛ لا تترك المصادقة معطلة خارج التطوير).
@@ -173,7 +176,7 @@ irm https://raw.githubusercontent.com/Alqudimi/rafidain/main/seed_vc_iraqi_windo
 
 > مقابض التحكم (متغيرات بيئة قبل الأمر): `IRAQI_YODAS_HOURS=200|all|0`، `IRAQI_STEPS=3000`، 
 > `IRAQI_SKIP_TRAIN=1` (تجهيز بيانات فقط)، `IRAQI_SKIP_DEPS=1` (إعادة استخدام بيئة جاهزة)، 
-> `IRAQI_DATA_ROOT=...`، `HF_ENDPOINT=...` (مرايا). كل المراحل قابلة للاستئناف بإعادة التشغيل — **والشيك بوينتات تُمرّر إلى Google Drive أثناء التدريب (`MyDrive/RafidainRuns/<run>`) وتُستعاد تلقائياً عند أي انقطاع** (`IRAQI_GDRIVE=auto|on|off`، `IRAQI_SYNC_INT=60`، `IRAQI_KEEP_LAST=3`).
+> `IRAQI_DATA_ROOT=...`، `HF_ENDPOINT=...` (مرايا). كل المراحل قابلة للاستئناف بإعادة التشغيل.
 
 ### ب. المسار اليدوي (داخل هذا المستودع)
 
@@ -181,10 +184,8 @@ irm https://raw.githubusercontent.com/Alqudimi/rafidain/main/seed_vc_iraqi_windo
 # 1) جهّز البيانات (تحويل/تنظيف/تقطيع 1–30 ثانية + manifest)
 python finetune/prepare_dataset.py --input-dir ./raw_iraqi
 
-# 2) التدريب — إما عبر make (نفس الشيء):
-make train ARGS="--dataset-dir ./raw_iraqi --run-name iraqi_v1 --max-steps 2000 --prepare"
-#    أو CLI مباشرة:
-uv run python finetune/run_finetune.py --dataset-dir ./raw_iraqi/prepared \
+# 2) التدريب — إما CLI مباشرة:
+python finetune/run_finetune.py --dataset-dir ./raw_iraqi/prepared \
     --run-name iraqi_v1 --max-steps 2000 --prepare
 
 #    أو عبر الـ API (متابعة تقدم + سجلات + إلغاء):
@@ -202,8 +203,7 @@ python evaluation/benchmark_stream.py --profile balanced
 ## 7) الاختبارات والمراقبة
 
 ```bash
-make test        # 95 اختباراً — بدون GPU (المحرك الوهمي)
-make smoke       # اختبار دخان شامل: خادم + واجهات ويب + بث WS فعلي
+make test        # 42 اختباراً — بدون GPU (المحرك الوهمي)
 make lint        # ruff
 make bench       # قياس RTF/زمن الكتلة على جهازك الفعلي
 ```
@@ -224,15 +224,13 @@ rafidain/                        # جذر المستودع (github.com/Alqudimi/
 │   ├── api/                      # REST + WebSocket + مصادقة + مقاييس
 │   ├── workers/                  # عامل طابور Redis للضبط الدقيق
 │   └── main.py                   # مصنع التطبيق + Lifespan
-├── finetune/                     # تجهيز بيانات + غلاف التدريب + مزامنة الشيك بوينت (checkpoint_sync.py)
+├── finetune/                     # تجهيز بيانات عراقية + غلاف التدريب + إعدادات
 ├── evaluation/                   # تقييم الجودة + قياس الأداء اللحظي
-├── rafidain/webui/               # 🆕 لوحة التحكم Gradio (/web) + صفحة البث الحي (/live)
-├── scripts/                      # manage.py (المكتشف الذكي) + مثبّت uv الموحّد + أدوات
-├── tests/                        # وحدات + تكامل (95)
+├── scripts/                      # تنزيل النماذج + عميل دخان + مثبّتات البيئات الثلاث
+├── tests/                        # وحدات + تكامل (42)
 ├── docker/                       # Dockerfile (base/full) + docker-compose
-├── .github/workflows/ci.yml      # lint + tests + smoke (عبر uv)
-├── uv.lock                       # 🆕 القفل الشامل لكل المتغيرات والمنصات
-├── seed_vc_iraqi_colab.sh        # بيانات + تدريب + مزامنة Google Drive (Colab)
+├── .github/workflows/ci.yml      # lint + tests + smoke
+├── seed_vc_iraqi_colab.sh        # تنزيل بيانات اللهجة العراقية + التدريب (Colab)
 ├── seed_vc_iraqi_ubuntu.sh       # تنزيل بيانات اللهجة العراقية + التدريب (Ubuntu)
 └── seed_vc_iraqi_windows.ps1     # تنزيل بيانات اللهجة العراقية + التدريب (Windows)
 ```

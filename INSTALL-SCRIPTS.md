@@ -14,40 +14,6 @@
 
 ---
 
-## 0) 🆕 المثبّت الموحّد الجديد (uv) — الطريق الأساسي
-
-**سكربت واحد لكل البيئات**: `scripts/install/setup_uv.sh` — Linux / macOS / WSL /
-Google Colab (ولويندوز: نفس خطوات `make` عبر `scripts/manage.py`).
-
-- يكتشف النظام والـ GPU وإصدار CUDA **تلقائياً** (عبر `scripts/manage.py detect`).
-- يثبّت **uv** إن لم يكن موجوداً، ثم يزامن البيئة **المقفولة** من `uv.lock`
-  (يثبّت القفل كل متغيرات torch: cpu / cu118 / cu124 / cu126 — فلا تعطّل بين
-  بيئة وأخرى أبداً).
-- يستنسخ Seed-VC، ينزّل النقاط، يكتب `.env` بمفتاح API عشوائي، يشغّل الاختبارات،
-  يرفع الخادم مع **لوحة التحكم `/web` وصفحة البث الحي `/live`**، ويفتح **نفقاً
-  عاماً مجانياً** `trycloudflare.com` (أو نفقك المسمّى عبر `CLOUDFLARED_TOKEN`).
-
-```bash
-# من المستودع:
-bash scripts/install/setup_uv.sh
-
-# curl-bash (بعد الاستضافة على GitHub):
-curl -fsSL https://raw.githubusercontent.com/Alqudimi/rafidain/main/scripts/install/setup_uv.sh | bash
-
-# أبرز الخيارات:
-#   --engine mock|seedvc   --variant cpu|cu118|cu124|cu126
-#   --api-key KEY          --no-auth  --no-models  --no-tests
-#   --no-tunnel            --no-serve (تثبيت فقط)   --port N
-```
-
-بعد التثبيت، كل دورة الحياة عبر `make` (أو `scripts/manage.py` على ويندوز):
-`make web` · `make web-tunnel` · `make train ARGS="…"` · `make status` · `make stop`.
-
-> مثبّتات pip الثلاثة القديمة (أدناه) ما زالت تعمل كما هي للتوافق الرجعي، لكن
-> مسار uv أعلاه هو **الموصى به والموثّق** — أسرع، مقفول، وعابر للأنظمة.
-
----
-
 ## 1) ماذا تفعل السكربتات بالضبط؟ (10 خطوات)
 
 1. **فحص البيئة**: نظام التشغيل، Python (يجب ≥ 3.10)، GPU وإصدار تعريف CUDA (عبر `nvidia-smi`).
@@ -60,7 +26,7 @@ curl -fsSL https://raw.githubusercontent.com/Alqudimi/rafidain/main/scripts/inst
    - عند المحرك الحقيقي فقط: **`torch==2.6.0` + `torchaudio==2.6.0`** من الفهرس المطابق لكرتك (cu124 / cu118 / CPU) + `transformers>=4.40,<5` + `librosa` + `munch` + `einops` + `descript-audio-codec` …
 7. **استنساخ مستودع Seed-VC** إلى `third_party/seed-vc` (عبر git أو تنزيل zip على ويندوز بدون git).
 8. **تنزيل النقاط مسبقاً** (~1.5 GB): DiT tiny (142MB) + CAMPPlus (28MB) + HiFT (82MB) + مشفّر المحتوى XLSR (1.27GB).
-9. **توليد `.env` كامل** مع مفتاح API عشوائي (أو مفتاحك عبر `--api-key`) + ملف `run_server.sh`/`run_server.ps1`، **ثم تشغيل الاختبارات الـ 95** (بالمحرك الوهمي — تتحقق من كل شيء بلا GPU).
+9. **توليد `.env` كامل** مع مفتاح API عشوائي (أو مفتاحك عبر `--api-key`) + ملف `run_server.sh`/`run_server.ps1`، **ثم تشغيل الاختبارات الـ 42** (بالمحرك الوهمي — تتحقق من كل شيء بلا GPU).
 10. **رفع الخادم** بالخلفية، انتظار `/healthz` ثم `/readyz` (تحميل النموذج + الإحماء)، ثم طباعة ملخص فيه الرابط، المفتاح، وأمثلة التجربة الجاهزة للنسخ. على Colab يُفتح أيضاً **نفق عام مجاني `trycloudflare.com`**.
 
 السكربتات **متكررة الآثار (idempotent)**: إعادة التشغيل توقف الخادم القديم، تعيد استخدام النقاط والـ venv، وتحتفظ بنسخة احتياطية من `.env` القديم.
@@ -109,9 +75,6 @@ curl -fsSL https://raw.githubusercontent.com/Alqudimi/rafidain/main/scripts/inst
 | `--foreground` | — | تشغيل الخادم بالمقدمة (Ctrl+C للإيقاف) |
 | `--source` | مسار/URL | مصدر المشروع |
 | `--ref` | اسم فرع | فرع Git (افتراضياً `main`) |
-| `--installer` | `pip` \| `uv` \| `auto` | استراتيجية التثبيت (انظر الملاحظة أدناه) |
-
-> **Python ≥ 3.13 على Colab**: المشروع يثبّت بايثون `<3.13` (تغطية عجلات torch 2.6 / numpy 1.26). وقتما تُحدّث Google آلة Colab إلى بايثون أحدث (مثل 3.13)، يكشف السكربت ذلك تلقائياً وينتقل إلى **المثبّت uv**: ينشئ `.venv` معزولاً ببايثون 3.11 يديره uv نفسه — فلا صلة له بإصدار نظام التشغيل إطلاقاً، ولا يفشل التثبيت القابل للتحرير. المسار التقليدي (pip النظام) يبقى كما هو على بايثون 3.10–3.12، ويمكن فرض uv يدوياً بـ `--installer uv`.
 
 > **ملاحظات Colab**: الآلة تُعاد تدويرها دورياً — أعد تشغيل الخلية لإرجاع كل شيء (النقاط تبقى طالما لم تُعاد تهيئة المشغل). رابط `trycloudflare.com` يغيّر مع كل تشغيل.
 

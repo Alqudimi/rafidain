@@ -4,38 +4,22 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "rafidain"
-version = "0.2.0"
+version = "0.1.0"
 description = "Real-time Iraqi-Arabic voice-conversion backend built on Seed-VC (seed-uvit-tat-xlsr-tiny)"
 readme = "README.md"
-# <3.13: the ML stack is pinned to numpy 1.26.x (wheels exist up to cp312),
-# matching the environment validated upstream (Colab / Ubuntu / Windows).
-requires-python = ">=3.10,<3.13"
+requires-python = ">=3.10"
 dependencies = [
     "fastapi>=0.110",
     "uvicorn[standard]>=0.29",
     "pydantic>=2.6",
     "pydantic-settings>=2.2",
     "python-dotenv>=1.0",
-    # numpy 1.26.x is the last line validated against the whole ML stack
-    # (descript-audio-codec, librosa, torch 2.6). Keep <2 for safety.
-    "numpy>=1.26.4,<2",
+    "numpy>=1.26",
     "soxr>=0.4",
     "python-multipart>=0.0.9",
     "prometheus-client>=0.20",
     "redis>=5.0",
     "PyYAML>=6.0",
-]
-
-[dependency-groups]
-# uv-native dev group (PEP 735): installed by default with `uv sync`.
-# Duplicated as the `dev` extra below so legacy `pip install -e ".[dev]"`
-# (the old installers) keeps working unchanged.
-dev = [
-    "pytest>=8.0",
-    "pytest-asyncio>=0.23",
-    "httpx>=0.27",
-    "ruff>=0.4",
-    "mypy>=1.9",
 ]
 
 [project.optional-dependencies]
@@ -46,39 +30,22 @@ dev = [
     "ruff>=0.4",
     "mypy>=1.9",
 ]
-# Non-torch ML stack (engine + fine-tuning + evaluation deps minus torch).
-# Pair with exactly ONE torch variant: cpu | cu118 | cu124 | cu126.
-ml = [
-    "transformers>=4.40,<5",
+# Heavy ML stack used by the Seed-VC engine, fine-tuning and evaluation.
+finetune = [
+    "torch>=2.1",
+    "torchaudio>=2.1",
+    "transformers>=4.40",
     "librosa>=0.10",
     "soundfile>=0.12",
     "huggingface-hub>=0.23",
-    "munch>=4.0",
-    "einops>=0.7",
-    "scipy>=1.10",
-    "descript-audio-codec==1.0.0",
-    "tqdm>=4.66",
 ]
-# Web control panel (Arabic RTL Gradio UI mounted at /web).
-webui = ["gradio>=5.0,<6"]
 vad = ["webrtcvad>=2.0.10"]
-# ---------------------------------------------------------------------------
-# Torch variants — pick the one matching your driver (auto-detected by
-# `make install` / scripts/manage.py). torch>=2.6 is REQUIRED: XLSR ships only
-# pytorch_model.bin and modern transformers enforce the CVE-2025-32434 fix.
-# Export TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD=1 for Seed-VC's classic .pth files
-# (manage.py / the installers do this for you).
-# ---------------------------------------------------------------------------
-cpu = ["torch==2.6.0", "torchaudio==2.6.0"]
-cu118 = ["torch==2.6.0", "torchaudio==2.6.0"]
-cu124 = ["torch==2.6.0", "torchaudio==2.6.0"]
-cu126 = ["torch==2.6.0", "torchaudio==2.6.0"]
 
 [tool.setuptools.packages.find]
 include = ["rafidain*"]
 
 [tool.setuptools.package-data]
-rafidain = ["webui/static/*.html"]
+"rafidain.web" = ["*.html", "*.js", "*.css"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
@@ -104,58 +71,3 @@ python_version = "3.10"
 ignore_missing_imports = true
 warn_unused_ignores = false
 check_untyped_defs = true
-
-# ---------------------------------------------------------------------------
-# uv — fully locked, reproducible environments on every platform.
-#
-#   uv sync                                   # base runtime (no torch)
-#   uv sync --group dev                       # + dev tooling
-#   uv sync --extra ml --extra cpu            # + ML stack, CPU torch
-#   uv sync --extra ml --extra cu124 --extra webui   # full GPU stack + web UI
-#
-# The four torch extras are mutually exclusive (tool.uv.conflicts below); the
-# lock file pins every variant so `uv sync --frozen` is bit-stable everywhere.
-# ---------------------------------------------------------------------------
-[tool.uv]
-conflicts = [
-    [
-        { extra = "cpu" },
-        { extra = "cu118" },
-        { extra = "cu124" },
-        { extra = "cu126" },
-    ],
-]
-
-[tool.uv.sources]
-torch = [
-    { index = "pytorch-cpu", extra = "cpu" },
-    { index = "pytorch-cu118", extra = "cu118" },
-    { index = "pytorch-cu124", extra = "cu124" },
-    { index = "pytorch-cu126", extra = "cu126" },
-]
-torchaudio = [
-    { index = "pytorch-cpu", extra = "cpu" },
-    { index = "pytorch-cu118", extra = "cu118" },
-    { index = "pytorch-cu124", extra = "cu124" },
-    { index = "pytorch-cu126", extra = "cu126" },
-]
-
-[[tool.uv.index]]
-name = "pytorch-cpu"
-url = "https://download.pytorch.org/whl/cpu"
-explicit = true
-
-[[tool.uv.index]]
-name = "pytorch-cu118"
-url = "https://download.pytorch.org/whl/cu118"
-explicit = true
-
-[[tool.uv.index]]
-name = "pytorch-cu124"
-url = "https://download.pytorch.org/whl/cu124"
-explicit = true
-
-[[tool.uv.index]]
-name = "pytorch-cu126"
-url = "https://download.pytorch.org/whl/cu126"
-explicit = true

@@ -1,7 +1,10 @@
-"""HTTP routes: health, voices, sessions, jobs."""
+"""HTTP routes: health, voices, sessions, jobs, file conversion, web UI."""
+
+from __future__ import annotations
 
 from fastapi import APIRouter
 
+from rafidain.api.http_convert import router as convert_router
 from rafidain.api.http_health import router as health_router
 from rafidain.api.http_jobs import router as jobs_router
 from rafidain.api.http_sessions import router as sessions_router
@@ -13,5 +16,6 @@ def register_routes(app) -> None:
     api.include_router(voices_router)
     api.include_router(sessions_router)
     api.include_router(jobs_router)
+    api.include_router(convert_router)
     app.include_router(health_router)
     app.include_router(api)
