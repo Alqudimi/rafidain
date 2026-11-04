@@ -113,14 +113,39 @@ def main() -> int:
     ap.add_argument("--gpu", type=int, default=0)
     ap.add_argument("--pretrained-ckpt", default=None, help="start from this .pth")
     ap.add_argument("--prepare", action="store_true", help="run prepare_dataset.py first")
+    ap.add_argument(
+        "--gdrive", choices=("auto", "none"), default="none",
+        help="mirror checkpoints to a mounted Google Drive",
+    )
+    ap.add_argument("--gdrive-dir", default=None, help="explicit mounted Google Drive directory")
+    ap.add_argument("--sync-interval", type=float, default=60.0)
+    ap.add_argument("--keep-last", type=int, default=3)
     args = ap.parse_args()
 
     root = seed_vc_root()
     dataset_dir = Path(args.dataset_dir).expanduser().resolve()
-    runs_dir = REPO_ROOT / "runs" / args.run_name
+    runs_dir = root / "runs" / args.run_name
     runs_dir.mkdir(parents=True, exist_ok=True)
 
     preflight(root, dataset_dir, need_torch=True)
+
+    sync = None
+    if args.gdrive != "none" or args.gdrive_dir:
+        from finetune.checkpoint_sync import (
+            CheckpointSync,
+            default_remote_root,
+            detect_google_drive,
+        )
+        gdrive = (
+            Path(args.gdrive_dir).expanduser().resolve()
+            if args.gdrive_dir else detect_google_drive()
+        )
+        remote = (default_remote_root(gdrive) / args.run_name) if gdrive else None
+        sync = CheckpointSync(
+            runs_dir, remote, interval_s=args.sync_interval, keep_last=args.keep_last,
+        )
+        sync.restore_first()
+        sync.start()
 
     if args.prepare:
         print("[prepare] preparing dataset (1-30 s, mono, 22.05 kHz)...")
@@ -165,20 +190,29 @@ def main() -> int:
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
     )
     assert proc.stdout is not None
-    for line in proc.stdout:
-        line = line.rstrip()
-        if not line:
-            continue
-        print(line, flush=True)
-        for pattern in _STEP_PATTERNS:
-            match = pattern.search(line)
-            if match:
-                state["progress"] = max(
-                    state["progress"],
-                    min(1.0, int(match.group(1)) / args.max_steps),
-                )
-        emit_progress(runs_dir, args.max_steps, state)
-    code = proc.wait()
+    console_log = runs_dir / "train_console.log"
+    log_fh = console_log.open("a", encoding="utf-8")
+    try:
+        for line in proc.stdout:
+            line = line.rstrip()
+            if not line:
+                continue
+            print(line, flush=True)
+            log_fh.write(line + "\n")
+            log_fh.flush()
+            for pattern in _STEP_PATTERNS:
+                match = pattern.search(line)
+                if match:
+                    state["progress"] = max(
+                        state["progress"],
+                        min(1.0, int(match.group(1)) / args.max_steps),
+                    )
+            emit_progress(runs_dir, args.max_steps, state)
+        code = proc.wait()
+    finally:
+        log_fh.close()
+        if sync:
+            sync.stop(final=True)
 
     if code != 0:
         print(f"[error] train.py exited with {code}", file=sys.stderr)

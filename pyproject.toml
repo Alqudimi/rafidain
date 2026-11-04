@@ -23,6 +23,25 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# `ml` is the common stack; choose exactly one hardware extra for PyTorch.
+ml = [
+    "transformers>=4.40,<5",
+    "librosa>=0.10",
+    "soundfile>=0.12",
+    "huggingface-hub>=0.23",
+    "munch>=4.0",
+    "einops>=0.7",
+    "scipy>=1.10",
+    "descript-audio-codec==1.0.0",
+]
+cpu = ["torch==2.6.0", "torchaudio==2.6.0"]
+cu118 = ["torch==2.6.0", "torchaudio==2.6.0"]
+cu124 = ["torch==2.6.0", "torchaudio==2.6.0"]
+cu126 = ["torch==2.6.0", "torchaudio==2.6.0"]
+webui = ["gradio>=5.0"]
+vad = ["webrtcvad>=2.0.10"]
+
+[dependency-groups]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
@@ -30,16 +49,6 @@ dev = [
     "ruff>=0.4",
     "mypy>=1.9",
 ]
-# Heavy ML stack used by the Seed-VC engine, fine-tuning and evaluation.
-finetune = [
-    "torch>=2.1",
-    "torchaudio>=2.1",
-    "transformers>=4.40",
-    "librosa>=0.10",
-    "soundfile>=0.12",
-    "huggingface-hub>=0.23",
-]
-vad = ["webrtcvad>=2.0.10"]
 
 [tool.setuptools.packages.find]
 include = ["rafidain*"]
@@ -62,8 +71,8 @@ target-version = "py310"
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W", "UP", "B", "C4", "SIM", "RET"]
 ignore = [
-    "B008",  # FastAPI uses Depends() in parameter defaults by design.
-    "SIM108",  # keep explicit if/else for readability in state machines.
+    "B008",
+    "SIM108",
 ]
 
 [tool.mypy]

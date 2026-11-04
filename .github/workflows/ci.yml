@@ -15,20 +15,21 @@ jobs:
         with:
           python-version: "3.11"
           cache: pip
+      - uses: astral-sh/setup-uv@v5
 
       - name: Install
         run: |
           sudo apt-get update && sudo apt-get install -y ffmpeg
-          pip install -e ".[dev]"
+          uv sync --frozen --group dev
 
       - name: Lint (ruff)
-        run: ruff check rafidain tests finetune evaluation scripts
+        run: uv run ruff check rafidain tests finetune evaluation scripts
 
       - name: Tests (mock engine, no GPU)
-        run: pytest -q
+        run: uv run pytest -q
 
       - name: Types (mypy, advisory)
-        run: mypy rafidain || true
+        run: uv run mypy rafidain || true
 
   smoke-mock:
     runs-on: ubuntu-latest
@@ -38,13 +39,14 @@ jobs:
         with:
           python-version: "3.11"
           cache: pip
+      - uses: astral-sh/setup-uv@v5
       - name: Install
         run: |
           sudo apt-get update && sudo apt-get install -y ffmpeg
-          pip install -e ".[dev]"
+          uv sync --frozen --group dev
       - name: Boot with the mock engine & run the end-to-end smoke client
         run: |
           RAFIDAIN__ENGINE__IMPL=mock RAFIDAIN__ENGINE__EAGER_LOAD=true \
-            uvicorn rafidain.main:app --host 127.0.0.1 --port 8000 &
+            uv run uvicorn rafidain.main:app --host 127.0.0.1 --port 8000 &
           for i in $(seq 1 30); do curl -fsS http://127.0.0.1:8000/healthz && break; sleep 2; done
-          python scripts/smoke_ws_client.py --url http://127.0.0.1:8000 --seconds 1
+          uv run python scripts/smoke_ws_client.py --url http://127.0.0.1:8000 --seconds 1

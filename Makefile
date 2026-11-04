@@ -1,69 +1,55 @@
-# ---------------------------------------------------------------------------
-# Rafidain — developer entrypoints
-# ---------------------------------------------------------------------------
-.PHONY: help install install-dev seedvc serve serve-mock test lint fmt typecheck \
-        download-models bench docker-build docker-up clean
-
-SEED_VC_REF ?= main
-
+SHELL := /bin/bash
+UV ?= uv
+PYTHON ?= 3.11
+ARGS ?=
+PORT ?= 8000
+.PHONY: help install install-dev seedvc download-models prepare train serve serve-mock web web-mock tunnel tunnel-stop tunnel-url status stop test lint fmt typecheck bench docker-build docker-up clean
 help:
-	@echo "Rafidain — realtime Iraqi voice-conversion backend"
-	@echo "  make install          install core runtime deps (light, no torch)"
-	@echo "  make install-dev      install runtime + dev tooling (editable)"
-	@echo "  make seedvc           clone Seed-VC into third_party/ (engine + training)"
-	@echo "  make serve            run the API with the real Seed-VC engine"
-	@echo "  make serve-mock       run the API with the mock engine (no ML deps)"
-	@echo "  make test             run unit + integration tests (mock engine)"
-	@echo "  make lint             ruff lint"
-	@echo "  make fmt              ruff auto-format imports + style"
-	@echo "  make typecheck        mypy"
-	@echo "  make download-models  pre-download Seed-VC checkpoints from HuggingFace"
-	@echo "  make bench            latency/RTF benchmark of the streaming engine"
-	@echo "  make docker-up        build & start with docker compose (GPU)"
-
+	@printf '%s\n' 'Rafidain (uv-managed)' '  make install [ENGINE=seedvc]' '  make install-dev' '  make seedvc' '  make download-models' '  make prepare ARGS="--input-dir ./raw_iraqi"' '  make train ARGS="--dataset-dir ./datasets/iraqi --run-name iraqi_v1 --gdrive auto"' '  make web | make web-mock | make tunnel | make stop' '  make test lint typecheck bench'
 install:
-	pip install -r requirements.txt
-
+	$(UV) run --python $(PYTHON) python scripts/manage.py install --engine $(if $(ENGINE),$(ENGINE),auto)
 install-dev:
-	pip install -r requirements.txt
-	pip install -e ".[dev]"
-
+	$(UV) sync --python $(PYTHON) --frozen --group dev
 seedvc:
-	@mkdir -p third_party
-	git clone --depth 1 https://github.com/Plachtaa/seed-vc third_party/seed-vc
-	@echo "Seed-VC cloned at third_party/seed-vc (ref: $(SEED_VC_REF))"
-	@echo "Install its requirements separately: pip install -r requirements-finetune.txt"
-
-serve:
-	uvicorn rafidain.main:app --host $${RAFIDAIN__HOST:-0.0.0.0} --port $${RAFIDAIN__PORT:-8000}
-
-serve-mock:
-	RAFIDAIN__ENGINE__IMPL=mock uvicorn rafidain.main:app --host 0.0.0.0 --port 8000
-
-test:
-	pytest -q
-
-lint:
-	ruff check rafidain tests finetune evaluation scripts
-
-fmt:
-	ruff check --fix rafidain tests finetune evaluation scripts
-
-typecheck:
-	mypy rafidain
-
+	$(UV) run --python $(PYTHON) python scripts/manage.py seedvc
 download-models:
-	python scripts/download_models.py
-
+	$(UV) run --python $(PYTHON) python scripts/manage.py download $(ARGS)
+prepare:
+	$(UV) run --python $(PYTHON) python finetune/prepare_dataset.py $(ARGS)
+train:
+	$(UV) run --python $(PYTHON) python finetune/run_finetune.py $(ARGS)
+serve:
+	$(UV) run --python $(PYTHON) python scripts/manage.py serve --port $(PORT)
+serve-mock:
+	$(UV) run --python $(PYTHON) python scripts/manage.py serve --mock --port $(PORT)
+web:
+	$(UV) run --python $(PYTHON) python scripts/manage.py web --port $(PORT)
+web-mock:
+	$(UV) run --python $(PYTHON) python scripts/manage.py web --mock --port $(PORT)
+tunnel:
+	$(UV) run --python $(PYTHON) python scripts/manage.py tunnel start --port $(PORT)
+tunnel-stop:
+	$(UV) run --python $(PYTHON) python scripts/manage.py tunnel stop
+tunnel-url:
+	$(UV) run --python $(PYTHON) python scripts/manage.py tunnel url
+status:
+	$(UV) run --python $(PYTHON) python scripts/manage.py status
+stop:
+	$(UV) run --python $(PYTHON) python scripts/manage.py stop
+test:
+	$(UV) run --python $(PYTHON) pytest -q
+lint:
+	$(UV) run --python $(PYTHON) ruff check rafidain tests finetune evaluation scripts
+fmt:
+	$(UV) run --python $(PYTHON) ruff check --fix rafidain tests finetune evaluation scripts
+typecheck:
+	$(UV) run --python $(PYTHON) mypy rafidain
 bench:
-	python evaluation/benchmark_stream.py
-
+	$(UV) run --python $(PYTHON) python evaluation/benchmark_stream.py
 docker-build:
 	docker compose -f docker/docker-compose.yml build
-
 docker-up:
 	docker compose -f docker/docker-compose.yml up -d
-
 clean:
-	rm -rf .pytest_cache .mypy_cache .ruff_cache build dist *.egg-info
-	find . -type d -name __pycache__ -exec rm -rf {} +
+	rm -rf .pytest_cache .mypy_cache .ruff_cache build dist *.egg-info .run
+	find . -type d -name __pycache__ -prune -exec rm -rf {} +

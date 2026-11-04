@@ -67,6 +67,8 @@ class Settings(BaseSettings):
     port: int = 8000
     log_level: str = "INFO"
     log_json: bool = True
+    # Built-in static control panel is enabled by default; set false for API-only deployments.
+    webui: bool = True
     api_keys: list[str] = Field(default_factory=list)
     cors_origins: list[str] = Field(default_factory=lambda: ["*"])
 

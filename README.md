@@ -84,7 +84,7 @@ python scripts/smoke_ws_client.py --url http://127.0.0.1:8000 --seconds 3
 
 ```bash
 make seedvc                                   # استنساخ مستودع Seed-VC
-pip install -r requirements-finetune.txt      # torch/transformers/... (اختر عجلة CUDA المناسبة)
+make install ENGINE=seedvc      # uv يكتشف GPU/CUDA ويثبت العجلة المقفلة المناسبة
 make download-models                          # تنزيل النقاط من HuggingFace مسبقاً
 cp .env.example .env                          # ثم عدّل القيم
 make serve                                    # uvicorn بالمحرك الحقيقي
@@ -182,10 +182,10 @@ irm https://raw.githubusercontent.com/Alqudimi/rafidain/main/seed_vc_iraqi_windo
 
 ```bash
 # 1) جهّز البيانات (تحويل/تنظيف/تقطيع 1–30 ثانية + manifest)
-python finetune/prepare_dataset.py --input-dir ./raw_iraqi
+uv run python finetune/prepare_dataset.py --input-dir ./raw_iraqi
 
 # 2) التدريب — إما CLI مباشرة:
-python finetune/run_finetune.py --dataset-dir ./raw_iraqi/prepared \
+uv run python finetune/run_finetune.py --dataset-dir ./raw_iraqi/prepared \
     --run-name iraqi_v1 --max-steps 2000 --prepare
 
 #    أو عبر الـ API (متابعة تقدم + سجلات + إلغاء):

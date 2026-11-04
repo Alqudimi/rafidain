@@ -52,7 +52,7 @@ RUN pip install transformers>=4.40 librosa>=0.10 soundfile>=0.12 "huggingface-hu
 
 # Seed-VC repository (pinned for reproducibility — override at build time).
 ARG SEED_VC_REF=main
-RUN git clone --depth 1 https://github.com/Plachtta/seed-vc /opt/seed-vc \
+RUN git clone --depth 1 https://github.com/Plachtaa/seed-vc /opt/seed-vc \
     && cd /opt/seed-vc && git fetch --depth 1 origin ${SEED_VC_REF} \
     && git checkout ${SEED_VC_REF} || true
 

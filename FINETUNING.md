@@ -45,7 +45,7 @@
 ## 4) التجهيز الآلي
 
 ```bash
-python finetune/prepare_dataset.py --input-dir ./raw_iraqi
+uv run python finetune/prepare_dataset.py --input-dir ./raw_iraqi
 # ينتج: ./raw_iraqi/prepared/*.wav  (22.05kHz أحادي 16bit، 1–28 ث، مُطبَّع، مقصوص الصمت)
 #        ./raw_iraqi/prepared/manifest.jsonl  (مسار/مدة/مصدر/بصمة)
 ```
@@ -72,7 +72,7 @@ curl -X POST http://host/api/v1/finetune/jobs/<job_id>/cancel
 ### عبر CLI (على عقدة الـ GPU مباشرة)
 
 ```bash
-python finetune/run_finetune.py \
+uv run python finetune/run_finetune.py \
   --dataset-dir ./raw_iraqi/prepared \
   --run-name iraqi_v1 --max-steps 2000 --save-every 250 --batch-size 2
 ```

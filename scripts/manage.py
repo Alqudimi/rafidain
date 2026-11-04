@@ -237,13 +237,17 @@ def cmd_install(args: argparse.Namespace) -> int:
                 f"→ torch extra: {variant}")
         else:
             say("no NVIDIA GPU detected → torch extra: cpu (mock engine works fully)")
+    selected_engine = args.engine
+    if selected_engine == "auto":
+        selected_engine = "seedvc" if detect_gpu() else "mock"
+        say(f"engine=auto → {selected_engine}")
     extras: list[str] = []
-    if args.engine == "seedvc":
+    if selected_engine == "seedvc":
         extras += ["ml", variant]
-    elif args.engine == "mock":
+    elif selected_engine == "mock":
         say("engine=mock — skipping the heavy ML stack entirely (no torch)")
     if args.webui:
-        extras.append("webui")
+        say("built-in static /web and /live pages are enabled (no extra runtime dependency)")
     cmd = sync_command(extras, dev=args.dev, frozen=not args.no_frozen)
     say("environment command: " + " ".join(cmd))
     code = subprocess.call(cmd, cwd=REPO)
@@ -390,15 +394,6 @@ def cmd_serve(args: argparse.Namespace) -> int:
 
 def cmd_web(args: argparse.Namespace) -> int:
     args.mock = getattr(args, "mock", False)
-    if not getattr(args, "mock", False):
-        # the web panel needs gradio — make sure the extra is synced in
-        say("ensuring the webui extra is installed (gradio)…")
-        code = subprocess.call(
-            ["uv", "sync", "--python", "3.11", "--frozen", "--extra", "webui"],
-            cwd=REPO,
-        )
-        if code != 0:
-            warn("could not sync webui extra — the panel at /web needs gradio")
     rc = cmd_serve(args)
     if rc == 0 and args.tunnel:
         return tunnel_start(port=args.port or _port_from_env(), token=args.token)

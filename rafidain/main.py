@@ -72,6 +72,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     register_exception_handlers(app)
     register_routes(app)
     app.include_router(ws_router)
+    # Register human-facing pages before the static mount so /live and /
+    # remain explicit API/application routes. The static /web panel is always
+    # available when webui is enabled and has no runtime dependency on Gradio.
+    from rafidain.webui.live import register_live_page
+    if settings.webui:
+        register_live_page(app)
     _mount_webapp(app)
     return app
 
@@ -87,9 +93,18 @@ def _mount_webapp(app: FastAPI) -> None:
     from fastapi.staticfiles import StaticFiles
 
     web_dir = Path(__file__).resolve().parent / "web"
+    if not app.state.settings.webui:
+        return
     if not (web_dir / "index.html").is_file():
         logger.warning("web UI assets not found at %s — serving API only", web_dir)
         return
+
+    from fastapi.responses import HTMLResponse
+
+    @app.get("/web", response_class=HTMLResponse, include_in_schema=False)
+    async def web_panel() -> HTMLResponse:
+        return HTMLResponse((web_dir / "index.html").read_text(encoding="utf-8"))
+
     app.mount("/", StaticFiles(directory=str(web_dir), html=True), name="webapp")
 
 
