@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Rafidain Google Colab bootstrap — uv-first, Drive-aware entrypoint.
 # Usage: bash scripts/install/setup_colab.sh [--engine seedvc|mock] [--no-models]
-set -Eeuo pipefail
+set -u -Eeuo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 export RAFIDAIN_COLAB=1
