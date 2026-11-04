@@ -52,7 +52,33 @@ python finetune/prepare_dataset.py --input-dir ./raw_iraqi
 
 السكربت يطبع الذروة إلى -3dBFS، يقصّ الصمت المتطرف (بوابة طاقة -45dB)، يضيف fade 50ms لكل مقطع، ويطبع تقريراً بالساعات الكلية.
 
-## 5) التدريب
+## 5) التدريب — قابلية الاستئناف والنسخ الاحتياطي
+
+التدريب **يستأنف تلقائياً** من أحدث شيك بوينت `DiT_epoch_*_step_*.pth` في مجلد
+التشغيل (`third_party/seed-vc/runs/<run_name>/`) — أعد تشغيل نفس الأمر بنفس
+`--run-name` وسيُكمل من حيث توقف، لا من الصفر.
+
+### النسخ الاحتياطي الحي إلى Google Drive (Colab)
+
+على Colab، مجلد التشغيل على قرصٍ زائل — لذلك يُمرّر كل شيك بوينت جديد إلى
+**Google Drive** في الخلفية كل 60 ثانية (`MyDrive/RafidainRuns/<run_name>/`)
+مع الاحتفاظ بآخر 3 نسخ عن بُعد لتوفير المساحة، وعند أي انقطاع/إعادة تشغيل
+**تُستعاد أحدث نسخة تلقائياً** قبل استئناف التدريب.
+
+```bash
+# عبر make / CLI (نفس السلوك):
+make train ARGS="--dataset-dir ./data/iraqi --run-name iraqi_v1 --max-steps 3000"
+# أوامر إضافية مقابض التحكم:
+#   --resume auto|always|never   (auto = الافتراضي)
+#   --gdrive auto|on|off         (auto: تُركّب على Colab فقط)
+#   --sync-interval 60  --keep-last 3
+# وعلى سكربت Colab المستقل: IRAQI_GDRIVE=auto|on|off · IRAQI_SYNC_INT · IRAQI_KEEP_LAST
+```
+
+أدوات التشخيص: `uv run python finetune/checkpoint_sync.py status --run-name iraqi_v1`
+(أحدث شيك بوينت محلي/على Drive) و`… watch --local-dir …` لمزامنة قائمة بذاتها.
+
+
 
 ### عبر الواجهة (موصى به — متابعة وإلغاء ومراقبة)
 

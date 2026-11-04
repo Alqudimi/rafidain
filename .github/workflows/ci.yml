@@ -11,40 +11,37 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
         with:
-          python-version: "3.11"
-          cache: pip
+          enable-cache: true
 
-      - name: Install
-        run: |
-          sudo apt-get update && sudo apt-get install -y ffmpeg
-          pip install -e ".[dev]"
+      - name: Install ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - name: Sync the locked environment (light + dev + webui)
+        run: uv sync --python 3.11 --frozen --group dev --extra webui
 
       - name: Lint (ruff)
-        run: ruff check rafidain tests finetune evaluation scripts
+        run: uv run --python 3.11 python -m ruff check rafidain tests finetune evaluation scripts
 
       - name: Tests (mock engine, no GPU)
-        run: pytest -q
+        run: uv run --python 3.11 python -m pytest -q
 
       - name: Types (mypy, advisory)
-        run: mypy rafidain || true
+        run: uv run --python 3.11 python -m mypy rafidain || true
 
   smoke-mock:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
         with:
-          python-version: "3.11"
-          cache: pip
-      - name: Install
-        run: |
-          sudo apt-get update && sudo apt-get install -y ffmpeg
-          pip install -e ".[dev]"
-      - name: Boot with the mock engine & run the end-to-end smoke client
-        run: |
-          RAFIDAIN__ENGINE__IMPL=mock RAFIDAIN__ENGINE__EAGER_LOAD=true \
-            uvicorn rafidain.main:app --host 127.0.0.1 --port 8000 &
-          for i in $(seq 1 30); do curl -fsS http://127.0.0.1:8000/healthz && break; sleep 2; done
-          python scripts/smoke_ws_client.py --url http://127.0.0.1:8000 --seconds 1
+          enable-cache: true
+      - name: Install ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - name: Sync the locked environment (light + dev + webui)
+        run: uv sync --python 3.11 --frozen --group dev --extra webui
+      - name: End-to-end smoke test (server + web UI + WS streaming)
+        run: bash scripts/smoke_e2e.sh

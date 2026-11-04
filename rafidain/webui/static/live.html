@@ -1,0 +1,551 @@
+<!doctype html>
+<html dir="rtl" lang="ar">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>رافدَين — البث الحي لتحويل الصوت</title>
+<style>
+  :root{
+    --bg:#0f172a; --panel:#1e293b; --panel2:#273449; --line:#334155;
+    --text:#e2e8f0; --muted:#94a3b8; --accent:#14b8a6; --accent2:#2dd4bf;
+    --danger:#f87171; --warn:#fbbf24;
+  }
+  *{box-sizing:border-box}
+  body{font-family:system-ui,'Segoe UI',Tahoma,'Noto Sans Arabic',sans-serif;
+       background:var(--bg);color:var(--text);margin:0;min-height:100vh}
+  .wrap{max-width:980px;margin:0 auto;padding:20px 16px 60px}
+  header{display:flex;align-items:center;gap:14px;padding:10px 4px 18px}
+  header .logo{font-size:2em}
+  header h1{margin:0;font-size:1.35em}
+  header p{margin:2px 0 0;color:var(--muted);font-size:.85em}
+  header a{margin-inline-start:auto;color:var(--accent2);text-decoration:none;font-size:.9em}
+  .grid{display:grid;grid-template-columns:340px 1fr;gap:16px}
+  @media(max-width:820px){.grid{grid-template-columns:1fr}}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:18px}
+  .card h2{margin:0 0 14px;font-size:1.05em;display:flex;align-items:center;gap:8px}
+  label{display:block;font-size:.82em;color:var(--muted);margin:12px 0 4px}
+  input[type=password],input[type=text],select{
+    width:100%;padding:10px 12px;border-radius:10px;border:1px solid var(--line);
+    background:var(--panel2);color:var(--text);font-size:.95em;outline:none}
+  input:focus,select:focus{border-color:var(--accent)}
+  .row{display:flex;gap:10px}
+  .row>*{flex:1}
+  button{cursor:pointer;border:none;border-radius:12px;padding:12px 18px;
+         font-size:1em;font-weight:700;font-family:inherit;transition:filter .15s}
+  button:hover{filter:brightness(1.1)}
+  button:disabled{opacity:.45;cursor:not-allowed}
+  .btn-live{background:var(--accent);color:#042f2e;width:100%;margin-top:16px;padding:14px}
+  .btn-stop{background:var(--danger);color:#450a0a;width:100%;margin-top:10px}
+  .btn-ghost{background:var(--panel2);color:var(--text)}
+  .status{margin-top:14px;padding:10px 12px;border-radius:10px;background:var(--panel2);
+          font-size:.85em;line-height:1.6;min-height:44px}
+  .dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-inline-end:6px;
+       background:var(--muted)}
+  .dot.ok{background:var(--accent)} .dot.err{background:var(--danger)}
+  .metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-top:14px}
+  .metric{background:var(--panel2);border-radius:12px;padding:10px 12px;text-align:center}
+  .metric b{display:block;font-size:1.25em;color:var(--accent2)}
+  .metric span{font-size:.72em;color:var(--muted)}
+  .vu{height:10px;border-radius:6px;background:var(--panel2);overflow:hidden;margin-top:8px}
+  .vu i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--accent),var(--warn));transition:width .08s}
+  .log{background:#0b1120;border:1px solid var(--line);border-radius:12px;padding:12px;
+       height:150px;overflow-y:auto;font-size:.78em;line-height:1.7;color:var(--muted);
+       direction:ltr;text-align:left;font-family:ui-monospace,monospace;white-space:pre-wrap}
+  .mode-tabs{display:flex;gap:8px;margin-bottom:16px}
+  .mode-tabs button{flex:1;background:var(--panel2);color:var(--muted);padding:10px}
+  .mode-tabs button.active{background:var(--accent);color:#042f2e}
+  .hint{font-size:.78em;color:var(--muted);line-height:1.7}
+  .file-drop{border:2px dashed var(--line);border-radius:14px;padding:26px;text-align:center;
+             color:var(--muted);cursor:pointer;transition:border-color .2s}
+  .file-drop:hover{border-color:var(--accent)}
+  audio{width:100%;margin-top:12px}
+  .err-banner{background:#450a0a;border:1px solid var(--danger);color:#fecaca;
+              padding:10px 14px;border-radius:10px;margin-top:12px;font-size:.85em;display:none}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="logo">🏛️</div>
+    <div>
+      <h1>رافدَين — البث الحي لتحويل الصوت</h1>
+      <p>Real-Time Voice Conversion · Seed-VC · صوت ← صوت لحظياً عبر الميكروفون أو ملف</p>
+    </div>
+    <a href="/web">لوحة التحكم الكاملة ↗</a>
+  </header>
+
+  <div class="grid">
+    <!-- ================================ settings column -->
+    <div class="card">
+      <h2>⚙️ إعدادات الجلسة</h2>
+      <label>مفتاح API (اتركه فارغاً إن كانت المصادقة معطّلة)</label>
+      <input type="password" id="apiKey" placeholder="X-API-Key / ?token=">
+
+      <label>الصوت الهدف</label>
+      <select id="voice"><option value="">— سجّل صوتاً من لوحة التحكم أولاً —</option></select>
+
+      <label>ملف زمن الوصول (Latency Profile)</label>
+      <select id="profile">
+        <option value="ultra_low">ultra_low — أدنى تأخير (~180ms)</option>
+        <option value="balanced" selected>balanced — التوازن (~430ms)</option>
+        <option value="quality">quality — أعلى جودة (غير تفاعلي)</option>
+      </select>
+
+      <div class="row">
+        <div>
+          <label>مستوى المرجع الصوتي (اختياري)</label>
+          <input type="text" id="refName" placeholder="اسم صوت جديد من الميكروفون">
+        </div>
+      </div>
+      <button class="btn-ghost" id="btnRegister" style="width:100%;margin-top:10px">
+        🎭 سجّل صوتاً هدفاً من هذه الصفحة
+      </button>
+
+      <div class="status"><span class="dot" id="dot"></span><span id="statusText">غير متصل</span></div>
+      <div class="err-banner" id="errBanner"></div>
+
+      <div class="metrics">
+        <div class="metric"><b id="mRtf">—</b><span>RTF (نسبة الزمن الحقيقي)</span></div>
+        <div class="metric"><b id="mBlocks">—</b><span>كتل مُحوّلة</span></div>
+        <div class="metric"><b id="mLat">—</b><span>تأخير تقديري</span></div>
+      </div>
+
+      <div class="log" id="log"></div>
+      <div class="hint" style="margin-top:12px">
+        ℹ️ يتطلب الميكروفون اتصالاً آمناً (HTTPS أو localhost) — نفق Cloudflare يوفّره تلقائياً.
+        لا تستخدم صوت أي شخص دون موافقته الصريحة.
+      </div>
+    </div>
+
+    <!-- ================================ streaming column -->
+    <div class="card">
+      <div class="mode-tabs">
+        <button id="tabMic" class="active">🎙️ ميكروفون لحظي</button>
+        <button id="tabFile">📁 تحويل ملف</button>
+      </div>
+
+      <!-- mic mode -->
+      <div id="micMode">
+        <h2>🎙️ تحدّث — يُبث صوتك محوّلاً في نفس اللحظة</h2>
+        <div class="vu"><i id="vuIn"></i></div>
+        <div class="hint" style="margin:2px 0 10px">مستوى الدخل (الميكروفون)</div>
+        <div class="vu"><i id="vuOut"></i></div>
+        <div class="hint" style="margin:2px 0 14px">مستوى الخرج (الصوت المحوّل)</div>
+        <button class="btn-live" id="btnStart">🔴 ابدأ البث الحي</button>
+        <button class="btn-stop" id="btnStop" disabled>⏹ أوقف البث</button>
+      </div>
+
+      <!-- file mode -->
+      <div id="fileMode" style="display:none">
+        <h2>📁 ارفع ملفاً وحوّله بنفس مسار البث الحي</h2>
+        <div class="file-drop" id="fileDrop">
+          اسحب ملفاً هنا أو انقر للاختيار<br>
+          <small>wav · mp3 · flac · m4a · opus · ogg</small>
+          <input type="file" id="fileInput" accept="audio/*" hidden>
+        </div>
+        <button class="btn-live" id="btnConvert" disabled>⚡ حوّل الملف الآن</button>
+        <audio id="fileAudio" controls></audio>
+        <a id="fileDownload" style="display:none;color:var(--accent2);margin-top:10px" download="rafidain_converted.wav">⬇ نزّل النتيجة (wav)</a>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+"use strict";
+/* ============================================================================
+   Rafidain live page — talks the project's native protocol:
+     POST /api/v1/sessions        {"voice_id", "latency_profile"} -> ws_url
+     WS   /api/v1/stream/<id>?token=KEY
+          -> {"type":"session.ready", audio_in{16000}, audio_out{sr}}
+          <- {"type":"stream.start"}  ... binary PCM s16le mono 16 kHz frames
+          -> binary converted frames (s16le @ audio_out.sample_rate)
+          <- {"type":"metrics.poll"} for stats; stream.stop at the end
+   ========================================================================== */
+const $ = (id) => document.getElementById(id);
+const logEl = $("log");
+function log(msg, kind) {
+  const t = new Date().toLocaleTimeString("en-GB");
+  logEl.textContent += `[${t}] ${msg}\n`;
+  logEl.scrollTop = logEl.scrollHeight;
+  if (kind === "err") showErr(msg);
+}
+function showErr(msg){ const b=$("errBanner"); b.style.display="block"; b.textContent="⚠ "+msg; }
+function hideErr(){ $("errBanner").style.display="none"; }
+function setStatus(text, cls){ $("statusText").textContent = text; $("dot").className = "dot " + (cls||""); }
+
+const API = {
+  key: () => $("apiKey").value.trim(),
+  headers: function(){ const h = {}; if (this.key()) h["X-API-Key"] = this.key(); return h; },
+};
+
+/* ---------------------------------------------------------------- voices */
+async function loadVoices() {
+  try {
+    const r = await fetch("/api/v1/voices", { headers: API.headers() });
+    if (r.status === 401) { log("مفتاح API مطلوب — أدخله أعلاه", "err"); return; }
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const data = await r.json();
+    const sel = $("voice");
+    sel.innerHTML = "";
+    if (!data.voices.length) {
+      sel.innerHTML = "<option value=''>— لا أصوات — سجّل واحداً بالأسفل —</option>";
+      return;
+    }
+    for (const v of data.voices) {
+      const opt = document.createElement("option");
+      opt.value = v.voice_id;
+      opt.textContent = `${v.name || v.voice_id} (${Math.round(v.duration_s)}s)`;
+      sel.appendChild(opt);
+    }
+    log(`تم تحميل ${data.voices.length} صوتاً هدفاً`);
+  } catch (e) { log("فشل تحميل الأصوات: " + e.message, "err"); }
+}
+loadVoices();
+
+/* Register a target voice straight from this page (mic or file). */
+async function registerReference() {
+  const name = $("refName").value.trim() || ("صوت-" + new Date().toISOString().slice(5, 16));
+  // record up to 15 s from the microphone
+  let blob;
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    log(`جارٍ تسجيل المرجع «${name}» — تحدث 5–15 ثانية ثم انقر موافق…`);
+    blob = await new Promise((resolve, reject) => {
+      const rec = new MediaRecorder(stream);
+      const chunks = [];
+      rec.ondataavailable = (e) => chunks.push(e.data);
+      rec.onstop = () => { stream.getTracks().forEach(t => t.stop()); resolve(new Blob(chunks)); };
+      rec.onerror = (e) => reject(e);
+      rec.start();
+      setTimeout(() => rec.state !== "inactive" && rec.stop(), 15000);
+      // stop early via confirm
+      setTimeout(() => { if (confirm("أوقف التسجيل الآن؟ (موافق = إيقاف)")) rec.state !== "inactive" && rec.stop(); }, 4000);
+    });
+  } catch (e) { log("تعذّر الوصول للميكروفون: " + e.message, "err"); return; }
+
+  const fd = new FormData();
+  fd.append("file", blob, "reference.webm");
+  fd.append("name", name);
+  try {
+    const r = await fetch("/api/v1/voices", { method: "POST", headers: API.headers(), body: fd });
+    if (!r.ok) throw new Error((await r.text()).slice(0, 200));
+    const v = await r.json();
+    log(`✅ سُجّل الصوت «${v.name}» (${v.duration_s.toFixed(1)}s)`);
+    $("refName").value = "";
+    await loadVoices();
+    $("voice").value = v.voice_id;
+  } catch (e) { log("فشل تسجيل الصوت: " + e.message, "err"); }
+}
+$("btnRegister").onclick = registerReference;
+
+/* ============================================================ mic engine */
+const SR_IN = 16000;
+let ws = null, sessionMeta = null;
+let audioCtx = null, workletNode = null, mediaStream = null;
+let outCtx = null, outWorklet = null;
+let blocks = 0, t0 = 0;
+
+const WORKLET_SRC = `
+class CaptureProcessor extends AudioWorkletProcessor {
+  constructor(){ super(); this._buf = []; }
+  process(inputs){
+    const ch = inputs[0][0];
+    if (ch) this._buf.push(new Float32Array(ch));
+    if (this._buf.length >= 8) {           // ~8 quanta of 128 => ~21ms @48k
+      let n = 0; for (const b of this._buf) n += b.length;
+      const out = new Float32Array(n);
+      let i = 0; for (const b of this._buf){ out.set(b, i); i += b.length; }
+      this._buf = [];
+      this.port.postMessage(out, [out.buffer]);
+    }
+    return true;
+  }
+}
+registerProcessor('capture-processor', CaptureProcessor);`;
+
+const PLAYBACK_SRC = () => `
+class PlaybackProcessor extends AudioWorkletProcessor {
+  constructor(){ super(); this.queue = []; this.off = 0;
+    this.port.onmessage = (e) => this.queue.push(e.data); }
+  process(outputs){
+    const out = outputs[0][0];
+    let i = 0;
+    while (i < out.length && this.queue.length){
+      const buf = this.queue[0];
+      const take = Math.min(buf.length - this.off, out.length - i);
+      out.set(buf.subarray(this.off, this.off + take), i);
+      i += take; this.off += take;
+      if (this.off >= buf.length){ this.queue.shift(); this.off = 0; }
+    }
+    if (i < out.length) out.fill(0, i);
+    return true;
+  }
+}
+registerProcessor('playback-processor', PlaybackProcessor);`;
+
+/* Float32 @ ctx.sampleRate -> Int16 @ 16 kHz (linear, good enough for speech) */
+function downmixTo16k(f32, srFrom) {
+  if (srFrom === SR_IN) return new Int16Array(f32.length).map((_, i) => Math.max(-32768, Math.min(32767, Math.round(f32[i] * 32767))));
+  const ratio = srFrom / SR_IN, outN = Math.floor(f32.length / ratio);
+  const out = new Int16Array(outN);
+  for (let i = 0; i < outN; i++) {
+    const pos = i * ratio, base = Math.floor(pos), frac = pos - base;
+    const s = f32[base] * (1 - frac) + (f32[base + 1] || 0) * frac;
+    out[i] = Math.max(-32768, Math.min(32767, Math.round(s * 32767)));
+  }
+  return out;
+}
+
+let inLevel = 0, outLevel = 0;
+setInterval(() => {
+  $("vuIn").style.width  = Math.min(100, inLevel  * 140) + "%";
+  $("vuOut").style.width = Math.min(100, outLevel * 140) + "%";
+}, 100);
+
+async function createSession(voiceId, profile) {
+  const r = await fetch("/api/v1/sessions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...API.headers() },
+    body: JSON.stringify({ voice_id: voiceId, latency_profile: profile }),
+  });
+  if (!r.ok) throw new Error("إنشاء الجلسة فشل: HTTP " + r.status + " " + (await r.text()).slice(0, 160));
+  return await r.json();
+}
+
+async function startLive() {
+  hideErr();
+  const voiceId = $("voice").value;
+  const profile = $("profile").value;
+  if (!voiceId) { showErr("اختر صوتاً هدفاً أولاً (أو سجّل واحداً من العمود الأيمن)"); return; }
+  try {
+    setStatus("جارٍ إنشاء الجلسة…");
+    const session = await createSession(voiceId, profile);
+    const proto = location.protocol === "https:" ? "wss" : "ws";
+    const token = API.key() ? `?token=${encodeURIComponent(API.key())}` : "";
+    const url = proto + "://" + location.host + new URL(session.ws_url, location.href).pathname + token;
+    ws = new WebSocket(url);
+    ws.binaryType = "arraybuffer";
+
+    ws.onopen = () => log("قُنال WebSocket مفتوح");
+    ws.onmessage = (ev) => {
+      if (typeof ev.data === "string") return handleControl(JSON.parse(ev.data));
+      handleAudioOut(ev.data);
+    };
+    ws.onerror = () => setStatus("خطأ في القناة", "err");
+    ws.onclose = (ev) => {
+      log(`أُغلق WebSocket (code ${ev.code}${ev.reason ? " · " + ev.reason : ""})`);
+      if (ev.code === 4401) showErr("مفتاح API غير صالح — أدخله في الإعدادات");
+      stopEngineUI();
+    };
+
+    mediaStream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+    });
+    audioCtx = new AudioContext();               // native rate (usually 48k)
+    await audioCtx.audioWorklet.addModule(URL.createObjectURL(new Blob([WORKLET_SRC], {type:"application/javascript"})));
+    workletNode = new AudioWorkletNode(audioCtx, "capture-processor");
+    workletNode.port.onmessage = (e) => {
+      const f32 = e.data;
+      let peak = 0; for (let i = 0; i < f32.length; i += 16) peak = Math.max(peak, Math.abs(f32[i]));
+      inLevel = Math.max(inLevel * .6, peak);
+      if (ws && ws.readyState === WebSocket.OPEN && sessionMeta && sessionMeta.started) {
+        const pcm = downmixTo16k(f32, audioCtx.sampleRate);
+        if (pcm.length) ws.send(pcm.buffer);
+      }
+    };
+    const src = audioCtx.createMediaStreamSource(mediaStream);
+    src.connect(workletNode);                    // worklet consumes without emitting
+
+    t0 = performance.now(); blocks = 0;
+    setStatus("البث نشط 🟢", "ok");
+    $("btnStart").disabled = true; $("btnStop").disabled = false;
+  } catch (e) {
+    log("فشل بدء البث: " + e.message, "err");
+    setStatus("فشل البدء", "err");
+    stopEngineUI();
+  }
+}
+
+function handleControl(msg) {
+  switch (msg.type) {
+    case "session.ready":
+      sessionMeta = {
+        started: false, srOut: msg.audio_out.sample_rate, profile: msg.profile,
+      };
+      log(`الجلسة جاهزة — الخروج @ ${msg.audio_out.sample_rate}Hz · بروفايل ${msg.profile.key}`);
+      outCtx = new AudioContext({ sampleRate: sessionMeta.srOut });
+      outCtx.audioWorklet.addModule(
+        URL.createObjectURL(new Blob([PLAYBACK_SRC()], {type:"application/javascript"}))
+      ).then(() => {
+        outWorklet = new AudioWorkletNode(outCtx, "playback-processor", { outputChannelCount: [1] });
+        outWorklet.connect(outCtx.destination);
+        if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: "stream.start" }));
+      });
+      break;
+    case "stream.started":
+      sessionMeta.started = true;
+      log("بدأ التدفق — تحدث الآن");
+      break;
+    case "metrics.snapshot": {
+      const m = msg.metrics || {};
+      $("mRtf").textContent = m.rtf != null ? Number(m.rtf).toFixed(2) : "—";
+      $("mBlocks").textContent = m.blocks_processed != null ? m.blocks_processed : blocks;
+      if (m.block_p95_ms != null) $("mLat").textContent = Math.round(m.block_p95_ms) + "ms";
+      break;
+    }
+    case "warning": log("تحذير: " + (msg.message || msg.code)); break;
+    case "error":   log("خطأ من الخادم: " + (msg.message || msg.code), "err"); break;
+    case "session.closed": log("أُغلقت الجلسة: " + (msg.reason || "")); break;
+    default: log("رسالة: " + JSON.stringify(msg));
+  }
+}
+
+function handleAudioOut(buf) {
+  if (!outWorklet) return;
+  const i16 = new Int16Array(buf);
+  const f32 = new Float32Array(i16.length);
+  let peak = 0;
+  for (let i = 0; i < i16.length; i++) {
+    f32[i] = i16[i] / 32768;
+    if ((i & 15) === 0) peak = Math.max(peak, Math.abs(f32[i]));
+  }
+  outLevel = Math.max(outLevel * .6, peak);
+  outWorklet.port.postMessage(f32, [f32.buffer]);
+  blocks++;
+}
+
+async function stopLive() {
+  try {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: "stream.stop" }));
+      await new Promise(r => setTimeout(r, 300));   // let the tail drain
+    }
+    ws && ws.close();
+  } catch (e) { /* ignore */ }
+  stopEngineUI();
+}
+
+function stopEngineUI() {
+  try { workletNode && workletNode.disconnect(); } catch (e) {}
+  try { audioCtx && audioCtx.close(); } catch (e) {}
+  try { outCtx && outCtx.close(); } catch (e) {}
+  try { mediaStream && mediaStream.getTracks().forEach(t => t.stop()); } catch (e) {}
+  workletNode = outWorklet = audioCtx = outCtx = mediaStream = null;
+  sessionMeta = null;
+  setStatus("غير متصل");
+  $("btnStart").disabled = false; $("btnStop").disabled = true;
+  if (blocks) log(`انتهى البث — ${blocks} كتلة خروج خلال ${((performance.now() - t0) / 1000).toFixed(1)}s`);
+}
+
+$("btnStart").onclick = startLive;
+$("btnStop").onclick = stopLive;
+
+/* ============================================================ file engine */
+let fileBuffer = null, fileArrayBuffer = null;
+const fileDrop = $("fileDrop"), fileInput = $("fileInput");
+fileDrop.onclick = () => fileInput.click();
+fileDrop.ondragover = (e) => { e.preventDefault(); fileDrop.style.borderColor = "var(--accent)"; };
+fileDrop.ondragleave = () => { fileDrop.style.borderColor = ""; };
+fileDrop.ondrop = (e) => { e.preventDefault(); fileDrop.style.borderColor = ""; if (e.dataTransfer.files[0]) pickFile(e.dataTransfer.files[0]); };
+fileInput.onchange = () => fileInput.files[0] && pickFile(fileInput.files[0]);
+
+async function pickFile(file) {
+  fileBuffer = file; fileArrayBuffer = await file.arrayBuffer();
+  fileDrop.innerHTML = `📄 ${file.name} <small>(${(file.size / 1e6).toFixed(2)} MB)</small><br><small>انقر لاختيار ملف آخر</small>`;
+  $("btnConvert").disabled = false;
+  log(`اختير الملف: ${file.name}`);
+}
+
+$("btnConvert").onclick = async () => {
+  hideErr();
+  const voiceId = $("voice").value, profile = $("profile").value;
+  if (!voiceId) { showErr("اختر صوتاً هدفاً أولاً"); return; }
+  if (!fileArrayBuffer) { showErr("اختر ملفاً أولاً"); return; }
+  $("btnConvert").disabled = true;
+  setStatus("جارٍ تحويل الملف عبر نفس مسار البث…");
+  try {
+    /* decode with the browser, then PCM16 frames over the live WS path */
+    const tmp = new AudioContext({ sampleRate: 48000 });
+    const decoded = await tmp.decodeAudioData(fileArrayBuffer.slice(0));
+    await tmp.close();
+    const mono = decoded.getChannelData(0);
+    const pcm16 = downmixTo16k(mono, decoded.sampleRate);
+
+    const session = await createSession(voiceId, profile);
+    const proto = location.protocol === "https:" ? "wss" : "ws";
+    const token = API.key() ? `?token=${encodeURIComponent(API.key())}` : "";
+    const url = proto + "://" + location.host + new URL(session.ws_url, location.href).pathname + token;
+
+    const outChunks = [];
+    let srOut = SR_IN, started = false, done = false;
+    await new Promise((resolve, reject) => {
+      const w = new WebSocket(url);
+      w.binaryType = "arraybuffer";
+      const timeout = setTimeout(() => reject(new Error("انتهت مهلة التحويل")), 120000);
+      w.onerror = () => { clearTimeout(timeout); reject(new Error("خطأ WebSocket")); };
+      w.onclose = () => { clearTimeout(timeout); resolve(); };
+      w.onmessage = (ev) => {
+        if (typeof ev.data === "string") {
+          const msg = JSON.parse(ev.data);
+          if (msg.type === "session.ready") {
+            srOut = msg.audio_out.sample_rate;
+            w.send(JSON.stringify({ type: "stream.start" }));
+          } else if (msg.type === "stream.started") {
+            started = true;
+            /* feed in 200ms frames at real-time-independent pace */
+            const FRAME = SR_IN * 0.2;
+            for (let i = 0; i < pcm16.length; i += FRAME) {
+              const slice = pcm16.subarray(i, Math.min(i + FRAME, pcm16.length));
+              const copy = new Int16Array(slice);       // copy: subarray shares buffer
+              setTimeout(() => w.readyState === WebSocket.OPEN && w.send(copy.buffer), (i / FRAME) * 40);
+            }
+            const totalFrames = Math.ceil(pcm16.length / FRAME);
+            setTimeout(() => w.readyState === WebSocket.OPEN && w.send(JSON.stringify({ type: "stream.stop" })), totalFrames * 40 + 400);
+          } else if (msg.type === "stream.stopped") {
+            done = true; w.close();
+          } else if (msg.type === "error") {
+            clearTimeout(timeout); reject(new Error(msg.message || "خطأ من الخادم"));
+          }
+        } else {
+          outChunks.push(new Int16Array(ev.data));
+        }
+      };
+    });
+
+    /* assemble a WAV from the collected chunks */
+    let total = 0; for (const c of outChunks) total += c.length;
+    const wav = new Uint8Array(44 + total * 2);
+    const dv = new DataView(wav.buffer);
+    const writeStr = (o, s) => { for (let i = 0; i < s.length; i++) dv.setUint8(o + i, s.charCodeAt(i)); };
+    writeStr(0, "RIFF"); dv.setUint32(4, 36 + total * 2, true); writeStr(8, "WAVE");
+    writeStr(12, "fmt "); dv.setUint32(16, 16, true); dv.setUint16(20, 1, true); dv.setUint16(22, 1, true);
+    dv.setUint32(24, srOut, true); dv.setUint32(28, srOut * 2, true); dv.setUint16(32, 2, true);
+    dv.setUint16(34, 16, true); writeStr(36, "data"); dv.setUint32(40, total * 2, true);
+    let off = 44;
+    for (const c of outChunks) for (let i = 0; i < c.length; i++) dv.setInt16(off++, c[i], true);
+
+    const blob = new Blob([wav], { type: "audio/wav" });
+    $("fileAudio").src = URL.createObjectURL(blob);
+    const dl = $("fileDownload"); dl.href = $("fileAudio").src; dl.style.display = "inline-block";
+    log(`✅ اكتمل تحويل الملف — ${total} عيّنة @ ${srOut}Hz`);
+    setStatus("تم التحويل ✅", "ok");
+  } catch (e) {
+    log("فشل تحويل الملف: " + e.message, "err");
+    setStatus("فشل التحويل", "err");
+  } finally {
+    $("btnConvert").disabled = false;
+  }
+};
+
+/* ------------------------------------------------------------- mode tabs */
+$("tabMic").onclick = () => { $("tabMic").classList.add("active"); $("tabFile").classList.remove("active"); $("micMode").style.display = ""; $("fileMode").style.display = "none"; };
+$("tabFile").onclick = () => { $("tabFile").classList.add("active"); $("tabMic").classList.remove("active"); $("fileMode").style.display = ""; $("micMode").style.display = "none"; };
+
+/* token= prefill from the tunnel URL */
+const q = new URLSearchParams(location.search);
+if (q.get("token")) $("apiKey").value = q.get("token");
+log("الصفحة جاهزة — اختر صوتاً وبروفايلاً ثم ابدأ البث.");
+</script>
+</body>
+</html>

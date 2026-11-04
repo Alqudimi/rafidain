@@ -81,6 +81,16 @@ class Settings(BaseSettings):
     send_queue_size: int = 64
     vad: str = "off"  # off | webrtc
 
+    # --- web ui -----------------------------------------------------------------
+    # Arabic RTL control panel (Gradio) mounted at /web — requires the
+    # `webui` extra (`uv sync --extra webui`); degrades gracefully when the
+    # dependency is missing. The lightweight realtime page is at /live.
+    webui: bool = True
+    # Auth gate for the web pages themselves (the underlying REST/WS API
+    # stays governed by api_keys). false: pages served without a key check —
+    # fine behind a tunnel you keep private, or on localhost.
+    webui_auth: bool = False
+
     # --- storage ---------------------------------------------------------------
     data_dir: Path = Path("./data")
     redis_url: str | None = None

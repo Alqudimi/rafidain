@@ -16,6 +16,9 @@ echo " Env  : IRAQI_YODAS_HOURS(200|all|0) IRAQI_STEPS(3000) IRAQI_BATCH(2)"
 echo "        IRAQI_SAVE_EVERY(250) IRAQI_SKIP_TRAIN=1 IRAQI_SKIP_SMALL=1"
 echo "        IRAQI_RUN_NAME(iraqi_v1) IRAQI_DATA_ROOT  HF_ENDPOINT(mirror)"
 echo "        IRAQI_SKIP_DEPS=1 (reuse the preinstalled Colab environment)"
+echo "        IRAQI_GDRIVE(auto|on|off) IRAQI_SYNC_INT(60s) IRAQI_KEEP_LAST(3)"
+echo "        -> checkpoints mirror to Google Drive (RafidainRuns/) and any"
+echo "           interrupted run resumes from the newest mirrored checkpoint."
 echo "=========================================================================="
 
 say()  { printf '\033[1;36m[iraqi]\033[0m %s\n' "$*"; }
@@ -37,6 +40,10 @@ BATCH="${IRAQI_BATCH:-2}"
 SAVE_EVERY="${IRAQI_SAVE_EVERY:-250}"
 YODAS_HOURS="${IRAQI_YODAS_HOURS:-200}"
 RUN_NAME="${IRAQI_RUN_NAME:-iraqi_v1}"
+# --- Google Drive checkpoint mirroring (resumable across VM recycles) ---
+GDRIVE_MODE="${IRAQI_GDRIVE:-auto}"          # auto|on|off (on: fail loudly when unmounted)
+GDRIVE_SYNC_INT="${IRAQI_SYNC_INT:-60}"      # seconds between checkpoint mirrors
+GDRIVE_KEEP_LAST="${IRAQI_KEEP_LAST:-3}"     # rolling checkpoints kept on Drive
 NPROC=$(nproc 2>/dev/null || echo 4)
 WORKERS="${IRAQI_WORKERS:-$NPROC}"
 if [ "$WORKERS" -gt 8 ]; then WORKERS=8; fi
@@ -908,6 +915,128 @@ say "  training corpus: $NFILES clips ready"
 
 # ---------------------------------------------------------------- stage 8
 RUN_DIR="$SEEDVC/runs/$RUN_NAME"
+
+# ---- Google Drive: mount, then prepare the checkpoint mirror -------------
+GDRIVE_ROOT=""
+mount_gdrive() {
+  [ -d /content/drive/MyDrive ] && return 0
+  "$PY" - <<'PYMOUNT' >/dev/null 2>&1 || true
+try:
+    from google.colab import drive
+    drive.mount("/content/drive")
+except Exception:
+    pass
+PYMOUNT
+  [ -d /content/drive/MyDrive ]
+}
+if [ "$GDRIVE_MODE" != "off" ]; then
+  if mount_gdrive; then
+    GDRIVE_ROOT="/content/drive/MyDrive"
+    say "Google Drive mounted - checkpoints will mirror to RafidainRuns/${RUN_NAME}/"
+  elif [ "$GDRIVE_MODE" = "on" ]; then
+    fail "IRAQI_GDRIVE=on but Google Drive is not mounted (mount it from the Colab sidebar, then re-run)"
+  else
+    say "Google Drive not mounted - training will be resumable LOCALLY only."
+    say "  tip: mount Drive from the Colab sidebar and re-run to mirror checkpoints."
+  fi
+fi
+GDRIVE_RUN_DIR=""
+[ -n "$GDRIVE_ROOT" ] && GDRIVE_RUN_DIR="$GDRIVE_ROOT/RafidainRuns/$RUN_NAME"
+
+# ---- standalone checkpoint sync helper (restore | push | watch) ----------
+cat > "$ROOT/ckpt_sync.py" <<'CKEOF'
+#!/usr/bin/env python3
+"""Standalone checkpoint mirror for seed_vc_iraqi_colab.sh (no repo needed).
+
+  restore  pull the newest remote DiT_*_step_*.pth into the local run dir
+  push     mirror new local checkpoints (+config/log/final) to the remote dir
+  watch    push every --interval seconds until killed (background loop)
+"""
+import os, re, sys, time, shutil, argparse
+
+STEP_RE = re.compile(r"step_(\d+)\.pth$")
+AUX = ("config_patched.yml", "train_console.log")
+
+def steps(d):
+    try:
+        return {p.name: int(STEP_RE.search(p.name).group(1))
+                for p in os.scandir(d)
+                if p.is_file() and STEP_RE.search(p.name)}
+    except FileNotFoundError:
+        return {}
+
+def same(src, dst):
+    try:
+        a, b = os.stat(src), os.stat(dst)
+        return a.st_size == b.st_size and int(a.st_mtime) == int(b.st_mtime)
+    except OSError:
+        return False
+
+def copy_atomic(src, dst):
+    os.makedirs(os.path.dirname(dst), exist_ok=True)
+    tmp = dst + ".part"
+    shutil.copy2(src, tmp)
+    os.replace(tmp, dst)
+
+def restore(local, remote):
+    r = steps(remote)
+    if not r:
+        return None
+    newest = max(r.items(), key=lambda kv: kv[1])[0]
+    l = steps(local)
+    if l.get(newest, -1) >= r[newest]:
+        return os.path.join(local, newest)
+    print(f"[gdrive] restoring {newest} -> {local}", flush=True)
+    copy_atomic(os.path.join(remote, newest), os.path.join(local, newest))
+    for name in AUX:
+        s = os.path.join(remote, name)
+        if os.path.isfile(s):
+            copy_atomic(s, os.path.join(local, name))
+    return os.path.join(local, newest)
+
+def push(local, remote, keep_last=3, final=False):
+    os.makedirs(remote, exist_ok=True)
+    copied = []
+    for name in sorted(steps(local), key=lambda n: steps(local)[n]):
+        s, d = os.path.join(local, name), os.path.join(remote, name)
+        if not same(s, d):
+            copy_atomic(s, d); copied.append(name)
+    names = AUX + (("ft_model.pth",) if final else ())
+    for name in names:
+        s = os.path.join(local, name)
+        if os.path.isfile(s):
+            d = os.path.join(remote, name)
+            if not same(s, d):
+                copy_atomic(s, d); copied.append(name)
+    ck = sorted(steps(remote).items(), key=lambda kv: kv[1])
+    for name, _ in ck[:-keep_last] if keep_last > 0 else []:
+        try: os.remove(os.path.join(remote, name))
+        except OSError: pass
+    return copied
+
+if __name__ == "__main__":
+    ap = argparse.ArgumentParser()
+    ap.add_argument("cmd", choices=("restore", "push", "watch"))
+    ap.add_argument("--local", required=True)
+    ap.add_argument("--remote", required=True)
+    ap.add_argument("--interval", type=float, default=60.0)
+    ap.add_argument("--keep-last", type=int, default=3)
+    ap.add_argument("--final", action="store_true")
+    a = ap.parse_args()
+    if a.cmd == "restore":
+        r = restore(a.local, a.remote)
+        print(f"[gdrive] resume from: {r or 'NONE (fresh run)'}", flush=True)
+    elif a.cmd == "push":
+        for n in push(a.local, a.remote, a.keep_last, a.final):
+            print(f"[gdrive] mirrored {n}", flush=True)
+    else:
+        while True:
+            push(a.local, a.remote, a.keep_last, False)
+            time.sleep(max(5.0, a.interval))
+CKEOF
+CKSYNC="$PY $ROOT/ckpt_sync.py"
+CK_COMMON="--local $RUN_DIR --remote ${GDRIVE_RUN_DIR:-$ROOT/.gdrive_nowhere}"
+
 if [ "${IRAQI_SKIP_TRAIN:-0}" = "1" ]; then
   say "stage 8/8: training skipped (IRAQI_SKIP_TRAIN=1) - data ready at $DATA_DIR"
 elif [ "$GPU_OK" -eq 0 ]; then
@@ -918,8 +1047,17 @@ else
   say "stage 8/8: fine-tuning seed-uvit-tat-xlsr-tiny on Iraqi speech"
   say "  prefetching model checkpoints (DiT tiny / XLSR / OpenVoice / HiFT / CAMPPlus) ..."
   "$PY" "$PIPE" prefetch --repo "$SEEDVC" || true
-  if ls "$RUN_DIR"/DiT_epoch_*.pth >/dev/null 2>&1; then
-    say "  resuming from the latest rolling checkpoint in $RUN_DIR"
+  # restore the newest Drive checkpoint so an interrupted run continues
+  if [ -n "$GDRIVE_RUN_DIR" ]; then
+    say "  restoring newest checkpoint from Google Drive (if any) ..."
+    $CKSYNC restore --local "$RUN_DIR" --remote "$GDRIVE_RUN_DIR" || true
+    if ls "$RUN_DIR"/DiT_epoch_*.pth >/dev/null 2>&1; then
+      say "  resuming from the latest rolling checkpoint in $RUN_DIR"
+    else
+      say "  fresh run: base weights auto-download from Plachta/Seed-VC"
+    fi
+  elif ls "$RUN_DIR"/DiT_epoch_*.pth >/dev/null 2>&1; then
+    say "  resuming from the latest rolling checkpoint in $RUN_DIR (local only)"
   else
     say "  fresh run: base weights auto-download from Plachta/Seed-VC"
   fi
@@ -936,6 +1074,16 @@ else
     --num-workers 2 \
     --gpu 0 > "$RUN_DIR/train_console.log" 2>&1 &
   TRAIN_PID=$!
+  cd "$ROOT"
+  # mirror checkpoints to Drive while training runs (resumable on VM recycle)
+  SYNC_PID=""
+  if [ -n "$GDRIVE_RUN_DIR" ]; then
+    say "  mirroring checkpoints to Drive every ${GDRIVE_SYNC_INT}s (keep last ${GDRIVE_KEEP_LAST}) ..."
+    nohup $CKSYNC watch --local "$RUN_DIR" --remote "$GDRIVE_RUN_DIR" \
+      --interval "$GDRIVE_SYNC_INT" --keep-last "$GDRIVE_KEEP_LAST" \
+      > "$RUN_DIR/gdrive_sync.log" 2>&1 &
+    SYNC_PID=$!
+  fi
   t0=$(date +%s)
   last_s=-1
   while kill -0 "$TRAIN_PID" 2>/dev/null; do
@@ -961,8 +1109,14 @@ else
     sleep 5
   done
   printf '\n'
-  wait "$TRAIN_PID" || { cd "$ROOT"; fail "training failed - re-run the script to resume from the last checkpoint (log: $RUN_DIR/train_console.log)"; }
-  cd "$ROOT"
+  wait "$TRAIN_PID" || { cd "$ROOT"; [ -n "$SYNC_PID" ] && kill "$SYNC_PID" 2>/dev/null; \
+      $CKSYNC push --local "$RUN_DIR" --remote "$GDRIVE_RUN_DIR" --keep-last "$GDRIVE_KEEP_LAST" --final >/dev/null 2>&1 || true; \
+      fail "training failed - re-run the script to resume from the last mirrored checkpoint (log: $RUN_DIR/train_console.log)"; }
+  [ -n "$SYNC_PID" ] && kill "$SYNC_PID" 2>/dev/null || true
+  if [ -n "$GDRIVE_RUN_DIR" ]; then
+    say "  final checkpoint sync to Google Drive ..."
+    $CKSYNC push --local "$RUN_DIR" --remote "$GDRIVE_RUN_DIR" --keep-last "$GDRIVE_KEEP_LAST" --final || true
+  fi
   cd "$ROOT"
   say "  verifying fine-tuned checkpoint with a real inference pass ..."
   "$PY" "$PIPE" verify --repo "$SEEDVC" --run-dir "$RUN_DIR" \

@@ -132,6 +132,16 @@ class FinetuneService:
             cmd.append("--prepare")
         if params.get("base_checkpoint"):
             cmd += ["--pretrained-ckpt", str(params["base_checkpoint"])]
+        # Resume / Google-Drive mirroring knobs (defaults resolve to "auto"
+        # inside run_finetune.py, so they stay omitted unless overridden).
+        if params.get("resume") and params["resume"] != "auto":
+            cmd += ["--resume", str(params["resume"])]
+        if params.get("gdrive") and params["gdrive"] != "auto":
+            cmd += ["--gdrive", str(params["gdrive"])]
+        if params.get("sync_interval"):
+            cmd += ["--sync-interval", str(params["sync_interval"])]
+        if params.get("keep_last"):
+            cmd += ["--keep-last", str(params["keep_last"])]
 
         env = dict(os.environ)
         env.setdefault("PYTHONUNBUFFERED", "1")

@@ -24,6 +24,7 @@ logs/
 *.pid
 smoke_output.*
 tools/
+.run/
 
 # Environment
 .env

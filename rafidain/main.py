@@ -56,7 +56,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         description=(
             "Real-time voice conversion backend for live calls, built on "
             "Seed-VC (seed-uvit-tat-xlsr-tiny) and tuned for the Iraqi dialect. "
-            "REST controls lifecycle; WebSocket carries the audio."
+            "REST controls lifecycle; WebSocket carries the audio; /web is the "
+            "Arabic RTL control panel and /live the realtime streaming page."
         ),
         version=__version__,
         lifespan=lifespan,
@@ -72,6 +73,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     register_exception_handlers(app)
     register_routes(app)
     app.include_router(ws_router)
+
+    # Web surfaces: landing + realtime live page (always) and the Gradio
+    # control panel (needs the `webui` extra). Both degrade gracefully.
+    try:
+        from rafidain.webui.live import register_live_page
+
+        register_live_page(app)
+    except Exception as exc:  # noqa: BLE001 — the API must boot regardless
+        logger.warning("live page unavailable: %s", exc)
+    try:
+        from rafidain.webui import mount_webui
+
+        mount_webui(app)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("web control panel unavailable: %s", exc)
     return app
 
 

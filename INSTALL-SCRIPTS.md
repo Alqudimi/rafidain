@@ -14,6 +14,40 @@
 
 ---
 
+## 0) 🆕 المثبّت الموحّد الجديد (uv) — الطريق الأساسي
+
+**سكربت واحد لكل البيئات**: `scripts/install/setup_uv.sh` — Linux / macOS / WSL /
+Google Colab (ولويندوز: نفس خطوات `make` عبر `scripts/manage.py`).
+
+- يكتشف النظام والـ GPU وإصدار CUDA **تلقائياً** (عبر `scripts/manage.py detect`).
+- يثبّت **uv** إن لم يكن موجوداً، ثم يزامن البيئة **المقفولة** من `uv.lock`
+  (يثبّت القفل كل متغيرات torch: cpu / cu118 / cu124 / cu126 — فلا تعطّل بين
+  بيئة وأخرى أبداً).
+- يستنسخ Seed-VC، ينزّل النقاط، يكتب `.env` بمفتاح API عشوائي، يشغّل الاختبارات،
+  يرفع الخادم مع **لوحة التحكم `/web` وصفحة البث الحي `/live`**، ويفتح **نفقاً
+  عاماً مجانياً** `trycloudflare.com` (أو نفقك المسمّى عبر `CLOUDFLARED_TOKEN`).
+
+```bash
+# من المستودع:
+bash scripts/install/setup_uv.sh
+
+# curl-bash (بعد الاستضافة على GitHub):
+curl -fsSL https://raw.githubusercontent.com/Alqudimi/rafidain/main/scripts/install/setup_uv.sh | bash
+
+# أبرز الخيارات:
+#   --engine mock|seedvc   --variant cpu|cu118|cu124|cu126
+#   --api-key KEY          --no-auth  --no-models  --no-tests
+#   --no-tunnel            --no-serve (تثبيت فقط)   --port N
+```
+
+بعد التثبيت، كل دورة الحياة عبر `make` (أو `scripts/manage.py` على ويندوز):
+`make web` · `make web-tunnel` · `make train ARGS="…"` · `make status` · `make stop`.
+
+> مثبّتات pip الثلاثة القديمة (أدناه) ما زالت تعمل كما هي للتوافق الرجعي، لكن
+> مسار uv أعلاه هو **الموصى به والموثّق** — أسرع، مقفول، وعابر للأنظمة.
+
+---
+
 ## 1) ماذا تفعل السكربتات بالضبط؟ (10 خطوات)
 
 1. **فحص البيئة**: نظام التشغيل، Python (يجب ≥ 3.10)، GPU وإصدار تعريف CUDA (عبر `nvidia-smi`).
