@@ -24,11 +24,16 @@
 #    --api-key KEY         use a fixed API key (default: generate a random one)
 #    --no-auth             disable API authentication (development only)
 #    --no-models           skip the checkpoint pre-download (~1.5 GB)
-#    --no-tests            skip the test suite (42 tests, ~10 s)
+#    --no-tests            skip the test suite (95 tests, ~10 s)
 #    --no-tunnel           skip the public trycloudflare.com tunnel
 #    --foreground          run the server attached to this shell
 #    --source SRC          project source: local dir, git URL, or tarball URL
 #    --ref BRANCH          git branch when cloning (default main)
+#    --installer pip|uv|auto
+#                          dependency strategy (default auto: pip when the
+#                          system Python is 3.10-3.12; uv when it is >= 3.13 —
+#                          uv then creates an isolated .venv with its own
+#                          Python 3.11, immune to the system Python version)
 #    -h | --help           show this help and exit
 # ============================================================================
 set -Eeuo pipefail
@@ -53,14 +58,17 @@ err()  { printf '%s\n' "${C_ERR}[✗]${C_NC} $*" >&2; }
 die()  { err "$*"; exit 1; }
 hr()   { printf '%s\n' "${C_DIM}──────────────────────────────────────────────────────────────${C_NC}"; }
 step() { STEP_N=$((STEP_N + 1)); printf '\n%s\n' "${C_HDR}━━━ [$STEP_N/$STEP_T] $* ━━━${C_NC}"; }
-usage() { sed -n '2,40p' "${BASH_SOURCE[0]:-$0}" 2>/dev/null | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,38p' "${BASH_SOURCE[0]:-$0}" 2>/dev/null | sed 's/^# \{0,1\}//'; }
 verle() {  # verle A B → success when version A <= B
   [ "$(printf '%s\n' "$1" "$2" | sort -V | head -n1)" = "$1" ]
 }
 trap 'rc=$?; if [ "$rc" -ne 0 ]; then
         printf "\n"; err "Setup failed (exit $rc, line $LINENO).";
+        log "Read the FIRST error above — the trailing hints below are generic:";
+        log "  • Python >= 3.13 on this VM is handled automatically via the uv";
+        log "    installer (isolated .venv + uv-managed Python 3.11).";
+        log "  • No GPU on Colab: Runtime ▸ Change runtime type ▸ GPU (T4), re-run.";
         log "Debug re-run:  bash -x <script> <your-args>";
-        log "Colab fix:     Runtime ▸ Change runtime type ▸ GPU (T4), then re-run.";
       fi' EXIT
 # live progress on a terminal; quiet when piped/redirected (curl-bash safe)
 if [ -t 1 ]; then PIPV=(--progress-bar on); CURLV=(--progress-bar); else PIPV=(-q); CURLV=(-sS); fi
@@ -70,6 +78,7 @@ STEP_N=0; STEP_T=10
 SOURCE="${RAFIDAIN_SOURCE:-${RAFIDAIN_REPO_URL:-}}"
 REF="${RAFIDAIN_REF:-main}"
 ENGINE=""; DEVICE=""; PORT="${RAFIDAIN_PORT:-8000}"; API_KEY="${RAFIDAIN_API_KEY:-}"
+INSTALLER="${RAFIDAIN_INSTALLER:-auto}"
 NO_AUTH=0; NO_MODELS=0; NO_TESTS=0; NO_TUNNEL=0; FOREGROUND=0
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -79,6 +88,7 @@ while [ $# -gt 0 ]; do
     --api-key)   API_KEY="${2:?}"; shift 2 ;;
     --source)    SOURCE="${2:?}"; shift 2 ;;
     --ref)       REF="${2:?}"; shift 2 ;;
+    --installer) INSTALLER="${2:?}"; shift 2 ;;
     --no-auth)   NO_AUTH=1; shift ;;
     --no-models) NO_MODELS=1; shift ;;
     --no-tests)  NO_TESTS=1; shift ;;
@@ -91,6 +101,7 @@ done
 if [ -n "$ENGINE" ] && [ "$ENGINE" != "seedvc" ] && [ "$ENGINE" != "mock" ]; then
   die "--engine must be 'seedvc' or 'mock' (got: $ENGINE)"
 fi
+case "$INSTALLER" in pip|uv|auto) ;; *) die "--installer must be pip, uv or auto (got: $INSTALLER)" ;; esac
 
 printf '%s\n' "${C_HDR}"
 printf '%s\n' '  ██████╗  █████╗ ██████╗ ██╗██╗   ██╗ █████╗  ██████╗ ███████╗'
@@ -115,7 +126,22 @@ for c in curl git python3; do command -v "$c" >/dev/null 2>&1 || die "required c
 PYBIN="$(command -v python3)"
 PYV="$("$PYBIN" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')"
 verle "3.10" "$PYV" || die "need Python >= 3.10, found $PYV ($PYBIN)"
-ok "Python $PYV ($PYBIN)"
+if [ "$INSTALLER" = "auto" ]; then
+  # pyproject pins requires-python >=3.10,<3.13 (torch 2.6 / numpy 1.26 wheel
+  # coverage); on newer system Pythons (Colab ships 3.13+) the pip route would
+  # fail at the editable install, so switch to uv + its own Python 3.11.
+  if verle "3.13" "$PYV"; then INSTALLER="uv"; else INSTALLER="pip"; fi
+fi
+if [ "$INSTALLER" = "uv" ]; then
+  if verle "3.13" "$PYV"; then
+    warn "system Python $PYV >= 3.13 — this project pins Python < 3.13 (torch/numpy wheels)"
+    log "switching to the uv installer: isolated .venv with uv-managed Python 3.11"
+  fi
+  ok "installer=uv (immune to the system Python version)"
+else
+  verle "3.13" "$PYV" && die "system Python $PYV >= 3.13 cannot use --installer pip (pyproject requires <3.13); re-run with --installer uv"
+  ok "installer=pip (system Python $PYV)"
+fi
 
 GPU_PRESENT=0; TORCH_INDEX=""; CUDA_CAP=""
 if command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi >/dev/null 2>&1; then
@@ -171,7 +197,7 @@ sys.exit(0 if (pathlib.Path(sysconfig.get_path("stdlib"))/"EXTERNALLY-MANAGED").
   PIP_FLAGS+=(--break-system-packages)   # non-Colab Debian-style system pip
   log "system pip is externally-managed — using --break-system-packages"
 fi
-ok "pip ready"
+ok "pip ready (installer=$INSTALLER)"
 
 # ------------------------------------------------------ [2/10] project source
 step "Locating the Rafidain project"
@@ -259,11 +285,33 @@ fi
 ok "project: $PROJECT"
 
 # ---------------------------------------------------------- [3/10] core deps
-step "Installing core Python dependencies"
+step "Installing core Python dependencies (installer=$INSTALLER)"
 cd "$PROJECT"
-"$PYBIN" -m pip install "${PIP_FLAGS[@]}" "${PIPV[@]}" -r requirements.txt
-"$PYBIN" -m pip install "${PIP_FLAGS[@]}" "${PIPV[@]}" -e ".[dev]"
-ok "fastapi/uvicorn/pydantic/soxr/… + dev tooling installed"
+if [ "$INSTALLER" = "uv" ]; then
+  # uv route: hermetic .venv with uv-managed Python 3.11 — works no matter
+  # which Python the VM ships (Colab 3.13+ included).
+  if ! command -v uv >/dev/null 2>&1; then
+    log "uv not found — installing it (one time, ~30 MB)"
+    curl -LsSf https://astral.sh/uv/install.sh | sh >/dev/null 2>&1 \
+      || { export PATH="$HOME/.local/bin:$PATH"; "$PYBIN" -m pip install --user uv; } \
+      || die "could not install uv — https://docs.astral.sh/uv/getting-started/installation/"
+    export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
+    command -v uv >/dev/null 2>&1 || die "uv installed but not on PATH — open a fresh shell or re-run"
+    ok "uv $(uv --version 2>/dev/null | awk '{print $2}') installed"
+  fi
+  UV_PY="${RAFIDAIN_PYTHON:-3.11}"
+  log "creating .venv with uv-managed Python $UV_PY (isolated from system $PYV)"
+  rm -rf .venv
+  uv venv --python "$UV_PY" .venv
+  PYBIN="$PROJECT/.venv/bin/python"
+  PYV="$("$PYBIN" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')"
+  pip_install() { uv pip install --python "$PYBIN" "$@"; }
+else
+  pip_install() { "$PYBIN" -m pip install "${PIP_FLAGS[@]}" "${PIPV[@]}" "$@"; }
+fi
+pip_install -r requirements.txt
+pip_install -e ".[dev,webui]"
+ok "fastapi/uvicorn/pydantic/soxr/… + dev tooling + webui installed (python $PYV)"
 
 # ------------------------------------------------------------ [4/10] ML stack
 step "Installing the ML stack (engine=$ENGINE)"
@@ -287,14 +335,14 @@ if [ "$ENGINE" = "seedvc" ]; then
     TORCH_PKGS=("torch==2.6.0" "torchaudio==2.6.0")
     if [ "$GPU_PRESENT" = 1 ]; then
       log "installing ${TORCH_PKGS[*]} from ${TORCH_INDEX##*/} (~2.5 GB, several minutes)"
-      "$PYBIN" -m pip install "${PIP_FLAGS[@]}" "${PIPV[@]}" "${TORCH_PKGS[@]}" --index-url "$TORCH_INDEX"
+      pip_install "${TORCH_PKGS[@]}" --index-url "$TORCH_INDEX"
     else
       log "installing CPU wheels ${TORCH_PKGS[*]} (small)"
-      "$PYBIN" -m pip install "${PIP_FLAGS[@]}" "${PIPV[@]}" "${TORCH_PKGS[@]}" --index-url "$TORCH_CPU_INDEX"
+      pip_install "${TORCH_PKGS[@]}" --index-url "$TORCH_CPU_INDEX"
     fi
-    verle "$PYV" "3.12" && "$PYBIN" -m pip install "${PIP_FLAGS[@]}" "${PIPV[@]}" "numpy==1.26.4"
+    verle "$PYV" "3.12" && pip_install "numpy==1.26.4"
   fi
-  "$PYBIN" -m pip install "${PIP_FLAGS[@]}" "${PIPV[@]}" "transformers>=4.40,<5" "librosa>=0.10" "soundfile>=0.12" "huggingface-hub>=0.23" "munch>=4.0" "einops>=0.7" "scipy>=1.10" "descript-audio-codec==1.0.0"
+  pip_install "transformers>=4.40,<5" "librosa>=0.10" "soundfile>=0.12" "huggingface-hub>=0.23" "munch>=4.0" "einops>=0.7" "scipy>=1.10" "descript-audio-codec==1.0.0"
   ok "torch/transformers/librosa/soundfile ready"
 else
   ok "mock engine — ML stack skipped entirely (no torch, no checkpoints)"
@@ -355,6 +403,7 @@ RAFIDAIN__SEND_QUEUE_SIZE=64
 RAFIDAIN__VAD=off
 RAFIDAIN__DATA_DIR=./data
 RAFIDAIN__REDIS_URL=
+RAFIDAIN__WEBUI=true
 EOF
 [ "$NO_AUTH" = 1 ] && warn "authentication DISABLED (--no-auth) — never do this on a shared server"
 ok ".env written (engine=$ENGINE, device=$DEVICE)"
@@ -465,6 +514,8 @@ hr
 printf '  %-12s %s\n' "Local URL"  "http://127.0.0.1:$PORT   (docs: /docs · metrics: /metrics)"
 [ -n "$TUNNEL_URL" ] && printf '  %-12s %s\n' "Public URL"  "$TUNNEL_URL"
 printf '  %-12s %s\n' "Engine"     "$ENGINE (device=$DEVICE, profile=balanced ≈ 430 ms/block on T4)"
+printf '  %-12s %s\n' "Python"     "$PYV via $INSTALLER"
+printf '  %-12s %s\n' "Web UI"     "/web (control panel) · /live (realtime page)"
 if [ "$NO_AUTH" = 0 ]; then
   printf '  %-12s %s\n' "API key"  "$API_KEY"
   printf '  %-12s %s\n' "Auth"     "header  X-API-Key: <key>    ·    websocket  ?token=<key>"
