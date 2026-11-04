@@ -63,7 +63,7 @@ def preflight(root: Path, dataset_dir: Path, need_torch: bool) -> None:
         try:
             import torch  # noqa: F401
         except ImportError:
-            sys.exit("error: torch not installed — pip install -r requirements-finetune.txt")
+            sys.exit("error: torch not installed — run `make install ENGINE=seedvc`")
         print("[preflight] torch OK")
 
 

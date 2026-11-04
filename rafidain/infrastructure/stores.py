@@ -122,7 +122,7 @@ class InMemoryCache:
     """Process-local TTL cache (single-node deployments, tests)."""
 
     def __init__(self) -> None:
-        self._data: dict[str, tuple[Any, float]] = {}
+        self._data: dict[str, tuple[Any, float | None]] = {}
 
     async def get(self, key: str) -> Any | None:
         entry = self._data.get(key)

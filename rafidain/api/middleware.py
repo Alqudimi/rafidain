@@ -9,7 +9,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from rafidain.core.errors import RafidainError
-from rafidain.core.logging import get_logger, set_request_id
+from rafidain.core.logging import get_logger, reset_request_id, set_request_id
 from rafidain.observability.metrics import metrics as prom
 
 logger = get_logger(__name__)
@@ -37,7 +37,7 @@ async def request_context_middleware(request: Request, call_next):
         method=request.method, path=path, status=str(response.status_code)
     ).inc()
     m["http_latency"].labels(method=request.method, path=path).observe(duration)
-    set_request_id(token)  # restore (context isolation for tests)
+    reset_request_id(token)  # restore context isolation for tests
     return response
 
 

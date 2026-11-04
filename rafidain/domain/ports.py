@@ -48,8 +48,12 @@ class ConversionEngine(Protocol):
     """A voice-conversion engine (Seed-VC adapter, mock, future models)."""
 
     impl: str
-    sr_in: int
-    sr_out: int
+
+    @property
+    def sr_in(self) -> int: ...
+
+    @property
+    def sr_out(self) -> int: ...
 
     def is_ready(self) -> bool: ...
 
@@ -60,7 +64,7 @@ class ConversionEngine(Protocol):
     def new_session(
         self,
         ref_pcm_16k: np.ndarray,
-        ref_pcm_model_sr: np.ndarray,
+        ref_pcm_model_sr: np.ndarray | None,
         profile: LatencyProfile,
     ) -> ConverterSession:
         """Condition a fresh converter on the target voice reference."""

@@ -62,7 +62,7 @@ def _import_seed_vc(root: Path) -> Any:
         raise DependencyMissingError(
             "Seed-VC repository not found. Clone it and point SEED_VC_ROOT at it:\n"
             "  make seedvc          # clones to third_party/seed-vc\n"
-            "  pip install -r requirements-finetune.txt",
+            "  make install ENGINE=seedvc",
             detail={"expected_root": str(root)},
         )
     root_str = str(root)
@@ -94,7 +94,7 @@ def _hf_download(repo_id: str, filename: str, cache_dir: Path) -> Path:
     except ImportError as exc:  # pragma: no cover - env specific
         raise DependencyMissingError(
             "huggingface-hub is required to fetch Seed-VC checkpoints: "
-            "pip install -r requirements-finetune.txt"
+            "make install ENGINE=seedvc"
         ) from exc
     path = Path(
         hf_hub_download(repo_id=repo_id, filename=filename, cache_dir=str(cache_dir))

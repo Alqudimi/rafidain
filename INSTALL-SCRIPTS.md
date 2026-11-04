@@ -235,7 +235,7 @@ irm https://raw.githubusercontent.com/Alqudimi/rafidain/main/seed_vc_iraqi_windo
 curl -s http://127.0.0.1:8000/healthz && curl -s http://127.0.0.1:8000/readyz
 
 # تجربة بث كاملة (يرفع صوتاً اصطناعياً ويحوّله عبر WebSocket):
-python scripts/smoke_ws_client.py --url http://127.0.0.1:8000 --seconds 3 --api-key <KEY>
+uv run python scripts/smoke_ws_client.py --url http://127.0.0.1:8000 --seconds 3 --api-key <KEY>
 
 # رفع صوت هدف حقيقي (5–30 ثانية صوت نظيف):
 curl -X POST http://127.0.0.1:8000/api/v1/voices -H "X-API-Key: <KEY>" \

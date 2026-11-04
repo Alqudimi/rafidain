@@ -75,7 +75,7 @@ cd rafidain
 make install-dev          # المتطلبات الخفيفة فقط (بدون torch)
 make serve-mock           # يشغّل الخادم على :8000 بالمحرك الوهمي
 # في طرفية ثانية:
-python scripts/smoke_ws_client.py --url http://127.0.0.1:8000 --seconds 3
+uv run python scripts/smoke_ws_client.py --url http://127.0.0.1:8000 --seconds 3
 ```
 
 الوثائق التفاعلية: `http://127.0.0.1:8000/docs`
@@ -194,8 +194,8 @@ curl -X POST http://host/api/v1/finetune/jobs -H "X-API-Key: ..." \
   -d '{"dataset_dir": "/srv/datasets/iraqi", "run_name": "iraqi_v1", "max_steps": 2000}'
 
 # 3) قيّم ثم انشر:
-python evaluation/evaluate_conversion.py --source s.wav --reference r.wav --converted c.wav
-python evaluation/benchmark_stream.py --profile balanced
+uv run python evaluation/evaluate_conversion.py --source s.wav --reference r.wav --converted c.wav
+uv run python evaluation/benchmark_stream.py --profile balanced
 ```
 
 النشر بمتغيرَي البيئة `RAFIDAIN__ENGINE__LOCAL_CHECKPOINT` و `RAFIDAIN__ENGINE__LOCAL_CONFIG`. الدليل الاستراتيجي الكامل (حجم البيانات، الجرعة، التقييم، الأمانة): **[FINETUNING.md](FINETUNING.md)**.

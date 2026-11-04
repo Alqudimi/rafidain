@@ -95,12 +95,12 @@ uv run python finetune/run_finetune.py \
 
 ```bash
 # أ) جودة المخرج: تشابه المتحدث (CAMPPlus cosine) + مستويات + اقتصاص
-python evaluation/evaluate_conversion.py \
+uv run python evaluation/evaluate_conversion.py \
   --source test_iraqi.wav --reference target_voice.wav \
   --converted model_out.wav --json-out report.json
 
 # ب) الأداء اللحظي على جهاز الإنتاج نفسه
-python evaluation/benchmark_stream.py --profile balanced
+uv run python evaluation/benchmark_stream.py --profile balanced
 ```
 
 **معايير القبول المقترحة:**

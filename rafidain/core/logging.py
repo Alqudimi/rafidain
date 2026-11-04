@@ -19,6 +19,10 @@ def set_request_id(request_id: str) -> contextvars.Token:
     return _request_id_var.set(request_id)
 
 
+def reset_request_id(token: contextvars.Token[str]) -> None:
+    _request_id_var.reset(token)
+
+
 def current_request_id() -> str:
     return _request_id_var.get()
 

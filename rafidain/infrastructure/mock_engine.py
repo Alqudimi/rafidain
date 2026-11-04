@@ -57,7 +57,7 @@ class MockConversionEngine:
     def new_session(
         self,
         ref_pcm_16k: np.ndarray,
-        ref_pcm_model_sr: np.ndarray,
+        ref_pcm_model_sr: np.ndarray | None,
         profile: LatencyProfile,
     ) -> MockConverterSession:
         del ref_pcm_16k, ref_pcm_model_sr

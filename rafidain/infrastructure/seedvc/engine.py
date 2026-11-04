@@ -50,7 +50,7 @@ class SeedVCConverterSession:
         self,
         bundle: SeedVCBundle,
         ref_pcm_16k: np.ndarray,
-        ref_pcm_model_sr: np.ndarray,
+        ref_pcm_model_sr: np.ndarray | None,
         profile: LatencyProfile,
         inference_slots: threading.Semaphore,
     ) -> None:
@@ -344,7 +344,7 @@ class SeedVCStreamingEngine:
     def new_session(
         self,
         ref_pcm_16k: np.ndarray,
-        ref_pcm_model_sr: np.ndarray,
+        ref_pcm_model_sr: np.ndarray | None,
         profile: LatencyProfile,
     ) -> SeedVCConverterSession:
         bundle = self._ensure_loaded_bundle()

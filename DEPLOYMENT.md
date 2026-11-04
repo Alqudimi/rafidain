@@ -30,7 +30,7 @@ curl -s http://localhost:8000/readyz    # "ready": true بعد تحميل الن
 ```
 
 - الصورة `full` تتضمن مستودع Seed-VC + حزمة ML. ثبّت `SEED_VC_REF` (argument بناء) على commit محدد للإنتاجية.
-- لخبز النقاط داخل الصورة (بدون تنزيل أول تشغيل): أزل تعليق `RUN python scripts/download_models.py` في `docker/Dockerfile`.
+- لخبز النقاط داخل الصورة (بدون تنزيل أول تشغيل): أزل تعليق `RUN uv run python scripts/download_models.py` في `docker/Dockerfile`.
 - التخزين الدائم: حجما Docker `rafidain-data` (الأصوات) و`rafidain-checkpoints` (النقاط).
 
 ### عامل الضبط الدقيق (عقدة GPU ثانية)
@@ -45,7 +45,7 @@ docker compose -f docker/docker-compose.yml --profile finetune up -d
 ## 3) التشغيل المباشر (بدون Docker)
 
 ```bash
-make seedvc && pip install -r requirements-finetune.txt && pip install -e .
+make seedvc && make install ENGINE=seedvc
 make download-models
 RAFIDAIN__ENGINE__DEVICE=cuda \
 RAFIDAIN__API_KEYS='["..."]' \

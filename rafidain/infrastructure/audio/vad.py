@@ -37,7 +37,7 @@ class VoiceActivityGate:
             except ImportError as exc:  # pragma: no cover - env specific
                 raise DependencyMissingError(
                     "VAD mode 'webrtc' requires the webrtcvad package: "
-                    "pip install 'rafidain[vad]'"
+                    "uv sync --extra vad"
                 ) from exc
             self._vad = webrtcvad.Vad(2)  # aggressiveness 0..3
 

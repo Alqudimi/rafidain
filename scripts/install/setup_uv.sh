@@ -187,7 +187,7 @@ fi
 
 # ------------------------------------------------------------------ [7/7] serve
 if [ "$NO_SERVE" = 1 ]; then
-  printf '%s\n' "${C_OK}  ✅ التثبيت مكتمل — شغّل لاحقاً:  make web  (أو make web-tunnel للبث العام)${C_NC}"
+  printf '%s\n' "${C_OK}  ✅ التثبيت مكتمل — شغّل لاحقاً:  make web ثم make tunnel للبث العام${C_NC}"
   exit 0
 fi
 
