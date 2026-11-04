@@ -2,7 +2,7 @@
 # Rafidain web launcher: install/sync, run /web + /live, and optionally tunnel.
 # Usage: bash scripts/web/launch_webapp.sh [--engine mock|seedvc] [--no-tunnel]
 set -Eeuo pipefail
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/../.." && pwd)"
 cd "$ROOT"
 if [[ " ${*:-} " == *" --stop "* ]]; then
   exec uv run --python 3.11 python scripts/manage.py stop

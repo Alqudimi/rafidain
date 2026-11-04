@@ -22,7 +22,7 @@
 #    --source URL|DIR       project source (default: this repo / auto-clone)
 #    -h | --help
 # ============================================================================
-set -u -Eeuo pipefail
+set -Eeuo pipefail
 
 RAFIDAIN_GIT="https://github.com/Alqudimi/rafidain"
 SCRIPT_PATH="${BASH_SOURCE[0]:-$0}"
