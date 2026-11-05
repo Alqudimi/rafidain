@@ -548,6 +548,9 @@ def tunnel_start(port: int, token: str | None = None) -> int:
     if not _http_ok(f"http://127.0.0.1:{port}/healthz"):
         die(f"no server on :{port} — start it first (make web / make serve)")
     binary = _ensure_cloudflared()
+    # Never reuse a URL from an earlier tunnel run.
+    TUNNEL_URL_FILE.unlink(missing_ok=True)
+    TUNNEL_LOG.write_text("", encoding="utf-8")
     if token:
         cmd = [str(binary), "tunnel", "run", "--token", token]
         say("starting a NAMED Cloudflare tunnel (your own domain)…")

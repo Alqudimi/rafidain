@@ -3,9 +3,9 @@ UV ?= uv
 PYTHON ?= 3.11
 ARGS ?=
 PORT ?= 8000
-.PHONY: help install install-dev seedvc download-models prepare train serve serve-mock web web-mock tunnel tunnel-stop tunnel-url status stop test lint fmt typecheck bench docker-build docker-up clean
+.PHONY: help install install-dev seedvc download-models prepare train serve serve-mock web web-mock web-tunnel tunnel tunnel-stop tunnel-url status stop test lint fmt typecheck bench docker-build docker-up clean
 help:
-	@printf '%s\n' 'Rafidain (uv-managed)' '  make install [ENGINE=seedvc]' '  make install-dev' '  make seedvc' '  make download-models' '  make prepare ARGS="--input-dir ./raw_iraqi"' '  make train ARGS="--dataset-dir ./datasets/iraqi --run-name iraqi_v1 --gdrive auto"' '  make web | make web-mock | make tunnel | make stop' '  make test lint typecheck bench'
+	@printf '%s\n' 'Rafidain (uv-managed)' '  make install [ENGINE=seedvc]' '  make install-dev' '  make seedvc' '  make download-models' '  make prepare ARGS="--input-dir ./raw_iraqi"' '  make train ARGS="--dataset-dir ./datasets/iraqi --run-name iraqi_v1 --gdrive auto"' '  make web | make web-mock | make web-tunnel | make stop' '  make test lint typecheck bench'
 install:
 	$(UV) run --python $(PYTHON) python scripts/manage.py install --engine $(if $(ENGINE),$(ENGINE),auto)
 install-dev:
@@ -26,6 +26,17 @@ web:
 	$(UV) run --python $(PYTHON) python scripts/manage.py web --port $(PORT)
 web-mock:
 	$(UV) run --python $(PYTHON) python scripts/manage.py web --mock --port $(PORT)
+web-tunnel: web
+	@$(UV) run --python $(PYTHON) python scripts/manage.py tunnel start --port $(PORT) || true
+	@for i in $$(seq 1 20); do \
+		URL=$$(test -f .run/tunnel.url && cat .run/tunnel.url || true); \
+		if [ -n "$$URL" ]; then \
+			echo ""; echo "[rafidain] الرابط العام المؤقت: $$URL"; \
+			echo "[rafidain] لوحة التحكم: $$URL/web"; \
+			echo "[rafidain] البث الحي: $$URL/live"; break; \
+		fi; sleep 1; \
+	done
+	@test -s .run/tunnel.url || { echo "[rafidain] تعذر استخراج رابط Cloudflare؛ راجع .run/tunnel.log" >&2; exit 1; }
 tunnel:
 	$(UV) run --python $(PYTHON) python scripts/manage.py tunnel start --port $(PORT)
 tunnel-stop:

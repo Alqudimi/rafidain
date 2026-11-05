@@ -39,6 +39,33 @@ else
   make web PORT="$PORT"
 fi
 if [[ "$TUNNEL" == 1 ]]; then
+  echo "[rafidain] بدء Cloudflare Quick Tunnel..."
+  set +e
   make tunnel PORT="$PORT"
-  make tunnel-url
+  TUNNEL_RC=$?
+  set -e
+  # manage.py normally writes .run/tunnel.url; the fallback also extracts a URL
+  # from the log when cloudflared is slow to flush its first output.
+  if [[ ! -s .run/tunnel.url && -f .run/tunnel.log ]]; then
+    grep -Eo 'https://[A-Za-z0-9-]+\.trycloudflare\.com' .run/tunnel.log | tail -n1 > .run/tunnel.url || true
+  fi
+  for _ in $(seq 1 15); do
+    [[ -s .run/tunnel.url ]] && break
+    sleep 1
+    grep -Eo 'https://[A-Za-z0-9-]+\.trycloudflare\.com' .run/tunnel.log 2>/dev/null | tail -n1 > .run/tunnel.url || true
+  done
+  if [[ -s .run/tunnel.url ]]; then
+    PUBLIC_URL="$(cat .run/tunnel.url)"
+    echo ""
+    echo "[rafidain] الرابط العام المؤقت المجاني: $PUBLIC_URL"
+    echo "[rafidain] لوحة التحكم: $PUBLIC_URL/web"
+    echo "[rafidain] البث الحي: $PUBLIC_URL/live"
+    echo "[rafidain] API: $PUBLIC_URL/docs"
+  else
+    echo "[rafidain] تعذر استخراج رابط Cloudflare (exit=$TUNNEL_RC). راجع: .run/tunnel.log" >&2
+    exit "${TUNNEL_RC:-1}"
+  fi
+else
+  echo "[rafidain] الرابط المحلي: http://127.0.0.1:$PORT/web"
+  echo "[rafidain] النفق معطل بسبب --no-tunnel"
 fi
