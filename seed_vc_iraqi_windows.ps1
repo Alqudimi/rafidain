@@ -71,7 +71,11 @@ if ($env:IRAQI_SKIP_DEPS -eq "1") {
   if (Test-Path "$Root\venv\Scripts\python.exe") { $Py = "$Root\venv\Scripts\python.exe" }
   Say "  using $(& $Py --version)"
 } else {
-  if (-not (Test-Path "$Root\venv")) { & $Py -m venv "$Root\venv" }
+  if (-not (Test-Path "$Root\venv\Scripts\python.exe")) {
+    Say "  creating a uv-managed Python 3.11 environment (system Python 3.13 is unsupported) ..."
+    & uv venv --python 3.11 "$Root\venv"
+    if ($LASTEXITCODE -ne 0) { Fail "uv could not create the Python 3.11 environment" }
+  }
   $Py = "$Root\venv\Scripts\python.exe"
   & uv pip install --python $Py --quiet --upgrade pip 2>$null
   if (-not (& $Py -c "import torch; assert torch.__version__.startswith('2.4.')" 2>$null)) {

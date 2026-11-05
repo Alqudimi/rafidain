@@ -81,9 +81,9 @@ if [ "${IRAQI_SKIP_DEPS:-0}" = "1" ]; then
   if [ -x "$ROOT/venv/bin/python" ]; then PY="$ROOT/venv/bin/python"; else PY="$PYBIN"; fi
   say "  using $("$PY" --version 2>&1)"
 else
-  if [ ! -d "$ROOT/venv" ]; then
-    "$PYBIN" -m venv "$ROOT/venv" 2>/dev/null || aptdo install -y python3-venv || true
-    "$PYBIN" -m venv "$ROOT/venv" 2>/dev/null || fail "venv creation failed (python3-venv missing?)"
+  if [ ! -x "$ROOT/venv/bin/python" ]; then
+    say "  creating a uv-managed Python 3.11 environment (never use system Python 3.13) ..."
+    uv venv --python 3.11 "$ROOT/venv" || fail "uv could not create the Python 3.11 environment"
   fi
   PY="$ROOT/venv/bin/python"
   uv pip install --python "$PY" -q --upgrade pip >/dev/null 2>&1 || true

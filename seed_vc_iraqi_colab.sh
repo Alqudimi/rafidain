@@ -76,16 +76,21 @@ if [ "${IRAQI_SKIP_DEPS:-0}" = "1" ]; then
   if [ -x "$ROOT/venv/bin/python" ]; then PY="$ROOT/venv/bin/python"; fi
   say "  using $($PY --version 2>&1)"
 else
-  uv pip install --system --python "$PY" -q --upgrade pip >/dev/null 2>&1 || true
+  say "  creating a uv-managed Python 3.11 environment (Colab system Python may be 3.13) ..."
+  if [ ! -x "$ROOT/venv/bin/python" ]; then
+    uv venv --python 3.11 "$ROOT/venv" || fail "uv could not create the Python 3.11 environment"
+  fi
+  PY="$ROOT/venv/bin/python"
+  uv pip install --python "$PY" -q --upgrade pip >/dev/null 2>&1 || true
   if ! $PY -c "import torch; assert torch.__version__.startswith('2.4.')" >/dev/null 2>&1; then
     say "  installing pinned PyTorch 2.4.0 cu121 (about 2.5 GB) ..."
-    uv pip install --system --python "$PY" "${PIPV[@]}" torch==2.4.0 torchvision==0.19.0 torchaudio==2.4.0 \
+    uv pip install --python "$PY" "${PIPV[@]}" torch==2.4.0 torchvision==0.19.0 torchaudio==2.4.0 \
       --index-url https://download.pytorch.org/whl/cu121 \
-      || uv pip install --system --python "$PY" "${PIPV[@]}" torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121 \
+      || uv pip install --python "$PY" "${PIPV[@]}" torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121 \
       || fail "PyTorch install failed"
   fi
-  uv pip install --system --python "$PY" "${PIPV[@]}" numpy==1.26.4 scipy==1.13.1 librosa==0.10.2 soundfile==0.12.1 munch==4.0.0 einops==0.8.0 transformers==4.46.3 pyyaml tqdm requests pyarrow==17.0.0 huggingface_hub \
-    || uv pip install --system --python "$PY" "${PIPV[@]}" numpy scipy librosa soundfile munch einops transformers pyyaml tqdm requests pyarrow==17.0.0 huggingface_hub \
+  uv pip install --python "$PY" "${PIPV[@]}" numpy==1.26.4 scipy==1.13.1 librosa==0.10.2 soundfile==0.12.1 munch==4.0.0 einops==0.8.0 transformers==4.46.3 pyyaml tqdm requests pyarrow==17.0.0 huggingface_hub \
+    || uv pip install --python "$PY" "${PIPV[@]}" numpy scipy librosa soundfile munch einops transformers pyyaml tqdm requests pyarrow==17.0.0 huggingface_hub \
     || fail "python dependencies install failed"
   $PY - <<'CHK'
 import torch, transformers, librosa, soundfile, munch, pyarrow, huggingface_hub, yaml
