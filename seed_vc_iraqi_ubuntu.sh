@@ -13,6 +13,8 @@ if ! command -v uv >/dev/null 2>&1; then
   export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
 fi
 command -v uv >/dev/null 2>&1 || { echo "uv installation failed" >&2; exit 1; }
+# Hugging Face Xet can rate-limit Colab IPs; use resumable HTTP downloads by default.
+export HF_HUB_DISABLE_XET="${HF_HUB_DISABLE_XET:-1}"
 
 echo "=========================================================================="
 echo " Seed-VC Iraqi Dialect Bootstrap - data + fine-tune + export"
@@ -408,6 +410,24 @@ def _iter_parquet_audio(path, outdir, prefix, part):
             continue
         yield f"{prefix}_p{part}_{i:06d}{ext}", data
 
+def _hf_retry(fn, *args, **kwargs):
+    """Retry Hugging Face/Xet downloads, then raise the final real error."""
+    last = None
+    for attempt in range(4):
+        try:
+            return fn(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001 - classify remote failures below
+            last = exc
+            msg = str(exc).lower()
+            rate_limited = any(x in msg for x in ("429", "too many requests", "rate limit", "xet-read-token"))
+            if not rate_limited or attempt == 3:
+                raise
+            os.environ["HF_HUB_DISABLE_XET"] = "1"
+            delay = 20 * (2 ** attempt)
+            log(f"Hugging Face rate limit; retry {attempt + 1}/3 in {delay}s (Xet disabled)")
+            time.sleep(delay)
+    raise last  # pragma: no cover
+
 def cmd_small(args):
     root = args.root
     os.makedirs(root, exist_ok=True)
@@ -415,54 +435,57 @@ def cmd_small(args):
     todo = args.only or ["youssef", "shiekh", "safaa"]
     sets_bar = Bar(len(todo), tag="small", unit=" sets").start()
     for name in todo:
-        if name not in todo:
-            continue
         if is_done(root, f"small_{name}"):
             log(f"small/{name}: already done, skipping")
             sets_bar.update(1, note=f"{name}: cached")
             continue
         outdir = os.path.join(root, "raw", name)
         os.makedirs(outdir, exist_ok=True)
-        if name in SMALL_SETS:
-            info = SMALL_SETS[name]
-            log(f"small/{name}: {info['about']} <- {info['repo']}")
-            pqdir = os.path.join(root, "raw", "_parquet", name)
-            part_bar = Bar(len(info["files"]), tag=f"small:{name}", unit=" files").start()
-            for part, f in enumerate(info["files"]):
-                p = hf_hub_download(repo_id=info["repo"], filename=f,
-                                    repo_type="dataset", local_dir=pqdir)
-                cnt = 0
-                for fn, data in _iter_parquet_audio(p, outdir, name, part):
-                    dst = os.path.join(outdir, fn)
-                    if not os.path.exists(dst):
-                        open(dst, "wb").write(data)
-                    cnt += 1
-                part_bar.update(1, note=f"{cnt} clips <- {os.path.basename(p)}")
-                log(f"small/{name}: {cnt} clips from {os.path.basename(p)}")
-            part_bar.close(note="done")
-        elif name == "safaa":
-            log(f"small/safaa: 676 Iraqi wavs (single female speaker, TTS-ready chunks)")
-            snapshot_download(repo_id=SAFAA_REPO, repo_type="dataset",
-                              local_dir=os.path.join(root, "raw", "_safaa_src"),
-                              allow_patterns=["train/*", "test/*"])
-            src_dir = os.path.join(root, "raw", "_safaa_src")
-            cnt = 0
-            for sub in ("train", "test"):
-                d = os.path.join(src_dir, sub)
-                if not os.path.isdir(d):
-                    continue
-                for fn in os.listdir(d):
-                    if fn.lower().endswith(".wav"):
-                        dst = os.path.join(outdir, f"{sub}_{fn}")
+        try:
+            if name in SMALL_SETS:
+                info = SMALL_SETS[name]
+                log(f"small/{name}: {info['about']} <- {info['repo']}")
+                pqdir = os.path.join(root, "raw", "_parquet", name)
+                part_bar = Bar(len(info["files"]), tag=f"small:{name}", unit=" files").start()
+                for part, f in enumerate(info["files"]):
+                    p = _hf_retry(hf_hub_download, repo_id=info["repo"], filename=f,
+                                  repo_type="dataset", local_dir=pqdir)
+                    cnt = 0
+                    for fn, data in _iter_parquet_audio(p, outdir, name, part):
+                        dst = os.path.join(outdir, fn)
                         if not os.path.exists(dst):
-                            shutil.copyfile(os.path.join(d, fn), dst)
+                            open(dst, "wb").write(data)
                         cnt += 1
-            log(f"small/safaa: {cnt} wav files")
-        sets_bar.update(1, note=f"{name}: done")
-        mark_done(root, f"small_{name}")
+                    part_bar.update(1, note=f"{cnt} clips <- {os.path.basename(p)}")
+                    log(f"small/{name}: {cnt} clips from {os.path.basename(p)}")
+                part_bar.close(note="done")
+            elif name == "safaa":
+                log("small/safaa: 676 Iraqi wavs (single female speaker, TTS-ready chunks)")
+                _hf_retry(snapshot_download, repo_id=SAFAA_REPO, repo_type="dataset",
+                          local_dir=os.path.join(root, "raw", "_safaa_src"),
+                          allow_patterns=["train/*", "test/*"])
+                src_dir = os.path.join(root, "raw", "_safaa_src")
+                cnt = 0
+                for sub in ("train", "test"):
+                    d = os.path.join(src_dir, sub)
+                    if not os.path.isdir(d):
+                        continue
+                    for fn in os.listdir(d):
+                        if fn.lower().endswith(".wav"):
+                            dst = os.path.join(outdir, f"{sub}_{fn}")
+                            if not os.path.exists(dst):
+                                shutil.copyfile(os.path.join(d, fn), dst)
+                            cnt += 1
+                log(f"small/safaa: {cnt} wav files")
+            else:
+                raise ValueError(f"unknown small dataset: {name}")
+            sets_bar.update(1, note=f"{name}: done")
+            mark_done(root, f"small_{name}")
+        except Exception as exc:  # remote dataset failure must not discard usable data
+            log(f"WARNING: small/{name} unavailable; continuing with other datasets: {exc}")
+            sets_bar.update(1, note=f"{name}: skipped")
     sets_bar.close(note="complete")
-    log("small: complete")
-
+    log("small: complete (unavailable sources can be retried on the next run)")
 # ---------------------------------------------------------------------------
 # YODAS Iraqi ranged fetch
 # ---------------------------------------------------------------------------
