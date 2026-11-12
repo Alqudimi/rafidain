@@ -127,8 +127,14 @@ oddadmix/yodas-v3-ar-labeled (dialect='iq': 49,194 clips / 339.0 h across
 2,360 source recordings) and an estimate-guided index of
 espnet/yodas3/data/ar/audio/*.tar (2,308 sources resolvable = 334.4 h).
 
+Pipeline v3 (2026-11) adds two further Iraqi sources: the 'iq' subset of
+oddadmix/dialectal-arabic-lahgtna-v2 (~10,746 clips / ~50 h @16kHz, fetched
+through datasets-server /rows) and the ar-IQ_hayder studio corpus from the
+Iraqi Dialect TTS Corpus (~450 clips / ~1.1 h @44.1kHz, Google Drive zip).
+
 Commands
-  small       download the small clean Iraqi speech sets (HF parquet/wav)
+  small       download the clean Iraqi speech sets (youssef / shiekh / safaa
+              + lahgtna-iq + kharrufa)
   yodas       ranged-fetch selected Iraqi source recordings from espnet tars
   prep        cut + segment + encode all raw audio -> training folder
   stats       report processed data statistics
@@ -354,6 +360,14 @@ SMALL_SETS = {
 }
 SAFAA_REPO = "safaa94/Myvoice-iraqi-accent-samples"
 
+# extra Iraqi sources (pipeline v3, 2026-11)
+LAHGTNA_REPO = "oddadmix/dialectal-arabic-lahgtna-v2"      # 13-dialect corpus; 'iq' only
+LAHGTNA_ABOUT = ("Iraqi 'iq' subset of Lahgtna v2 (train split): ~10,746 clips / "
+                 "~50 h @16kHz mono, dialectal transcripts included")
+KHARRUFA_DRIVE_ID = "1iQ-ueye2pLFavy-2HWDEOhscD_wn_7ie"    # Iraqi Dialect TTS Corpus (CC BY 4.0)
+KHARRUFA_ABOUT = ("450 studio-recorded Iraqi-dialect clips @44.1kHz (~1.1 h) with "
+                  "fully diacritized transcripts")
+
 def _sniff_ext(data, path=""):
     """guess audio extension from magic bytes / provided path"""
     p = (path or "").lower()
@@ -422,11 +436,211 @@ def _hf_retry(fn, *args, **kwargs):
             time.sleep(delay)
     raise last  # pragma: no cover
 
+# ---------------------------------------------------------------------------
+# Lahgtna v2 — Iraqi subset via datasets-server /rows
+# ---------------------------------------------------------------------------
+def _ds_rows(sess, offset, length, retries=4):
+    """one datasets-server /rows call (Lahgtna v2, train) with retries; None on failure"""
+    url = ("https://datasets-server.huggingface.co/rows?dataset=" + LAHGTNA_REPO
+           + "&config=default&split=train"
+           + f"&offset={offset}&length={length}")
+    for a in range(retries):
+        try:
+            r = sess.get(url, timeout=60)
+            if r.status_code == 200:
+                return r.json()
+        except Exception:
+            pass
+        time.sleep(2 + 3 * a)
+    return None
+
+def _fetch_lahgtna(root, outdir, workers=8):
+    """Fetch the Iraqi ('iq') rows of Lahgtna v2's train split.
+
+    /rows returns 100 rows per request; we page the whole split (6,082 pages
+    for 608,124 rows), keep language=='iq' rows (~1.8% = ~10.7k clips), and
+    download each wav asset immediately (its URL is presigned, so it must be
+    consumed in the same run). Resumable: finished pages and existing files
+    are skipped; failed pages/clips are retried on the next run.
+    """
+    import requests
+    os.makedirs(outdir, exist_ok=True)
+    state_path = os.path.join(root, "raw", "_lahgtna_state.json")
+    state = {"pages_done": {}, "failed_pages": [], "failed_audio": [], "total_rows": 0}
+    if os.path.exists(state_path):
+        try:
+            saved = json.load(open(state_path))
+            for k in state:
+                if k in saved:
+                    state[k] = saved[k]
+        except Exception:
+            pass
+    sess = requests.Session()
+    sess.headers.update({"User-Agent": "seed-vc-iraqi/1.0"})
+
+    total = int(state.get("total_rows") or 0)
+    if not total:
+        r0 = _ds_rows(sess, 0, 1)
+        if r0 is None:
+            raise RuntimeError("datasets-server unreachable for Lahgtna v2 (retry later)")
+        total = int(r0.get("num_rows_total") or 0)
+        if not total:
+            raise RuntimeError("Lahgtna v2 train: no num_rows_total")
+        state["total_rows"] = total
+        json.dump(state, open(state_path, "w"))
+
+    page_len = 100
+    n_pages = (total + page_len - 1) // page_len
+    pending = [o for o in range(0, total, page_len)
+               if str(o) not in state["pages_done"] and o not in state["failed_pages"]]
+    cap = int(os.environ.get("IRAQI_LAHGTNA_MAX_PAGES", "0") or 0)
+    if cap:
+        pending = pending[:cap]
+    log(f"lahgtna: {total:,} rows = {n_pages} pages | {len(pending)} to page this run "
+        f"({len(state['pages_done'])} already done)")
+
+    tx_path = os.path.join(outdir, "_transcripts.jsonl")
+    have = set()
+    if os.path.exists(tx_path):
+        for line in open(tx_path, encoding="utf-8"):
+            try:
+                have.add(json.loads(line)["idx"])
+            except Exception:
+                pass
+
+    def page_worker(off):
+        r = _ds_rows(sess, off, page_len)
+        if r is None:
+            return None
+        jobs = []
+        for rw in r.get("rows", []):
+            row = rw.get("row", {})
+            if row.get("language") != "iq":
+                continue
+            idx = rw.get("row_idx")
+            aud = row.get("audio")
+            if isinstance(aud, list) and aud:
+                aud = aud[0]
+            if idx is None or not isinstance(aud, dict) or not aud.get("src"):
+                continue
+            jobs.append((idx, aud["src"], row.get("transcript_text") or ""))
+        return jobs
+
+    def audio_worker(job):
+        idx, url = job
+        out = os.path.join(outdir, f"lq_{idx:06d}.wav")
+        if os.path.exists(out) and os.path.getsize(out) > 1024:
+            return idx, "skip"
+        for a in range(4):
+            try:
+                data = sess.get(url, timeout=300).content
+                if data[:4] == b"RIFF" and len(data) > 1024:
+                    open(out, "wb").write(data)
+                    return idx, "ok"
+                return idx, "bad"
+            except Exception:
+                time.sleep(2 + 2 * a)
+        return idx, "fail"
+
+    audio_futs = []
+    page_bar = Bar(max(len(pending), 1), tag="lahgtna", unit=" pages").start()
+    with ThreadPoolExecutor(max_workers=max(4, workers // 2)) as pages, \
+         ThreadPoolExecutor(max_workers=workers) as pool:
+        futs = {pages.submit(page_worker, o): o for o in pending}
+        for f in as_completed(futs):
+            off = futs[f]
+            try:
+                jobs = f.result()
+            except Exception:
+                jobs = None
+            if jobs is None:
+                state["failed_pages"].append(off)
+                page_bar.update(1, note=f"page {off} failed (retry next run)")
+                continue
+            state["pages_done"][str(off)] = 1
+            for idx, url, tx in jobs:
+                if tx and idx not in have:
+                    have.add(idx)
+                    with open(tx_path, "a", encoding="utf-8") as fh:
+                        fh.write(json.dumps({"idx": idx, "text": tx}, ensure_ascii=False) + "\n")
+                audio_futs.append(pool.submit(audio_worker, (idx, url)))
+            page_bar.update(1, note=f"{len(state['pages_done'])}/{n_pages} pages")
+        dl_bar = Bar(max(len(audio_futs), 1), tag="lahgtna", unit=" wavs").start()
+        for f in as_completed(audio_futs):
+            idx, st = f.result()
+            if st == "fail":
+                state["failed_audio"].append(idx)
+            dl_bar.update(1, note="ok" if st != "fail" else f"row {idx} failed")
+        dl_bar.close()
+    page_bar.close()
+
+    state["failed_pages"] = sorted(set(state["failed_pages"]))
+    state["failed_audio"] = sorted(set(state["failed_audio"]))
+    json.dump(state, open(state_path, "w"))
+    n = len([f for f in os.listdir(outdir) if f.endswith(".wav")])
+    log(f"lahgtna: {n} wavs on disk | transcripts: {tx_path}")
+    if state["failed_pages"] or state["failed_audio"]:
+        raise RuntimeError(
+            f"lahgtna: {len(state['failed_pages'])} pages / {len(state['failed_audio'])} clips "
+            "failed — re-run this stage to retry only what is missing")
+
+# ---------------------------------------------------------------------------
+# Kharrufa corpus — ar-IQ studio recordings from Google Drive
+# ---------------------------------------------------------------------------
+def _fetch_kharrufa(root, outdir):
+    """ar-IQ part of the Iraqi Dialect TTS Corpus (Kharrufa et al. 2024, CC BY 4.0).
+
+    The corpus lives in a single Google Drive zip (2.06 GB); downloaded once
+    (gdown, resumable), we extract only ar-IQ_hayder/audio_files (450 wavs)
+    plus the transcript metadata, then drop the archive to save disk.
+    """
+    import zipfile
+    os.makedirs(outdir, exist_ok=True)
+    zdir = os.path.join(root, "raw", "_kharrufa")
+    os.makedirs(zdir, exist_ok=True)
+    zpath = os.path.join(zdir, "iraqi_dialect_tts_corpus.zip")
+    if not (os.path.exists(zpath) and zipfile.is_zipfile(zpath)):
+        try:
+            import gdown  # noqa: F401
+        except ImportError:
+            log("kharrufa: installing gdown ...")
+            subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", "gdown>=5"])
+        log("kharrufa: downloading corpus from Google Drive (2.06 GB, resumable) ...")
+        subprocess.check_call([sys.executable, "-m", "gdown", KHARRUFA_DRIVE_ID,
+                               "-O", zpath, "--continue"])
+    if not (os.path.exists(zpath) and zipfile.is_zipfile(zpath)):
+        raise RuntimeError("kharrufa: archive is not a valid zip after download")
+    z = zipfile.ZipFile(zpath)
+    names = z.namelist()
+    wavs = [n for n in names if n.startswith("ar-IQ_hayder/audio_files/")
+            and n.lower().endswith(".wav")]
+    cnt = 0
+    for n in wavs:
+        dst = os.path.join(outdir, os.path.basename(n))
+        if os.path.exists(dst) and os.path.getsize(dst) > 1024:
+            continue
+        with z.open(n) as srcf, open(dst, "wb") as dstf:
+            shutil.copyfileobj(srcf, dstf)
+        cnt += 1
+    if "ar-IQ_hayder/metadata.txt" in names:
+        open(os.path.join(outdir, "_kharrufa_metadata.txt"), "wb").write(
+            z.read("ar-IQ_hayder/metadata.txt"))
+    z.close()
+    total = len([f for f in os.listdir(outdir) if f.lower().endswith(".wav")])
+    log(f"kharrufa: {total} ar-IQ wavs in {outdir} (new this run: {cnt})")
+    if total >= 400:
+        try:
+            os.remove(zpath)      # extraction is complete and idempotent — free 2 GB
+        except OSError:
+            pass
+    else:
+        log("kharrufa: keeping the zip for a resume re-run (fewer than 400 wavs)")
+
 def cmd_small(args):
     root = args.root
     os.makedirs(root, exist_ok=True)
     from huggingface_hub import hf_hub_download, snapshot_download
-    todo = args.only or ["youssef", "shiekh", "safaa"]
+    todo = args.only or ["youssef", "shiekh", "safaa", "lahgtna", "kharrufa"]
     sets_bar = Bar(len(todo), tag="small", unit=" sets").start()
     for name in todo:
         if is_done(root, f"small_{name}"):
@@ -471,6 +685,12 @@ def cmd_small(args):
                                 shutil.copyfile(os.path.join(d, fn), dst)
                             cnt += 1
                 log(f"small/safaa: {cnt} wav files")
+            elif name == "lahgtna":
+                log(f"small/lahgtna: {LAHGTNA_ABOUT}")
+                _fetch_lahgtna(root, outdir, getattr(args, "workers", 8) or 8)
+            elif name == "kharrufa":
+                log(f"small/kharrufa: {KHARRUFA_ABOUT}")
+                _fetch_kharrufa(root, outdir)
             else:
                 raise ValueError(f"unknown small dataset: {name}")
             sets_bar.update(1, note=f"{name}: done")
@@ -638,7 +858,7 @@ def cmd_prep(args):
                 if fn.endswith(".webm"):
                     jobs.extend(_prep_job_src(args, os.path.join(ydir, fn), "yodas"))
     small_files = []
-    for origin in ("youssef", "shiekh", "safaa"):
+    for origin in ("youssef", "shiekh", "safaa", "lahgtna", "kharrufa"):
         d = os.path.join(raw, origin)
         if os.path.isdir(d):
             for fn in sorted(os.listdir(d)):
@@ -849,7 +1069,9 @@ def main():
 
     p = sub.add_parser("small")
     p.add_argument("--root", default="iraqi_seedvc")
-    p.add_argument("--only", nargs="*", choices=["youssef", "shiekh", "safaa"])
+    p.add_argument("--only", nargs="*",
+                   choices=["youssef", "shiekh", "safaa", "lahgtna", "kharrufa"])
+    p.add_argument("--workers", type=int, default=8)
     p.set_defaults(fn=cmd_small)
 
     p = sub.add_parser("yodas")
@@ -904,7 +1126,7 @@ PIPE="$ROOT/iraqi_pipeline.py"
 
 # ---------------------------------------------------------------- stage 5
 if [ "${IRAQI_SKIP_SMALL:-0}" != "1" ]; then
-  say "stage 5/8: downloading clean Iraqi speech sets (youssef / shiekh / safaa)"
+  say "stage 5/8: downloading clean Iraqi speech sets (youssef / shiekh / safaa / lahgtna / kharrufa)"
   "$PY" "$PIPE" small --root "$ROOT" || fail "small datasets stage failed"
 else
   say "stage 5/8: skipped (IRAQI_SKIP_SMALL=1)"
