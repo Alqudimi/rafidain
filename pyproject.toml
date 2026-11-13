@@ -67,6 +67,13 @@ addopts = "-m 'not gpu'"
 [tool.ruff]
 line-length = 100
 target-version = "py310"
+extend-exclude = [
+    # مصادر خلايا الدفاتر: كود خلايا Jupyter يعتمد أسماء معرّفة عبر الخلايا، وليس وحدات مستقلة
+    # (صحتها تراقَب بفاحصات scripts/notebook_sources نفسها)
+    "scripts/notebook_sources",
+    # أدوات بحث أحادية الغرض + نسخة مرجعية من خط البيانات المضمّن في سكربتات التثبيت
+    "scripts/data_research",
+]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W", "UP", "B", "C4", "SIM", "RET"]

@@ -445,29 +445,59 @@ def _hf_retry(fn, *args, **kwargs):
 # ---------------------------------------------------------------------------
 # Lahgtna v2 — Iraqi subset via datasets-server /rows
 # ---------------------------------------------------------------------------
-def _ds_rows(sess, offset, length, retries=4):
-    """one datasets-server /rows call (Lahgtna v2, train) with retries; None on failure"""
+def _ds_rows(sess, offset, length, retries=7):
+    """one datasets-server /rows call (Lahgtna v2, train) with patient retries.
+
+    The datasets-server has overload episodes (503/502/500 "index is loading",
+    429 rate limits, read timeouts) that can last minutes; a page is only
+    given up on after ~3-10 minutes of backed-off retries. Retry-After is
+    honored when present. Returns None on hard failure.
+    """
     url = ("https://datasets-server.huggingface.co/rows?dataset=" + LAHGTNA_REPO
            + "&config=default&split=train"
            + f"&offset={offset}&length={length}")
     for a in range(retries):
         try:
-            r = sess.get(url, timeout=60)
+            r = sess.get(url, timeout=90)
             if r.status_code == 200:
                 return r.json()
+            if r.status_code in (429, 500, 502, 503, 504):
+                ra = 0
+                try:
+                    ra = int(r.headers.get("Retry-After") or 0)
+                except Exception:
+                    pass
+                time.sleep(min(max(ra, 5 + 5 * a), 90))
+                continue
+            break  # other 4xx: retrying will not help
         except Exception:
-            pass
-        time.sleep(2 + 3 * a)
+            time.sleep(min(5 + 5 * a, 60))
     return None
+
 
 def _fetch_lahgtna(root, outdir, workers=8):
     """Fetch the Iraqi ('iq') rows of Lahgtna v2's train split.
 
-    /rows returns 100 rows per request; we page the whole split (6,082 pages
-    for 608,124 rows), keep language=='iq' rows (~1.8% = ~10.7k clips), and
+    /rows is the only endpoint that pages the full 608,124-row 13-dialect
+    split (the /filter endpoint only scans a ~10k-row prefix, and the wav
+    asset URLs are CloudFront-signed so they must come from /rows responses).
+    We page the split, keep language=='iq' rows (~1.8% = ~10.7k clips), and
     download each wav asset immediately (its URL is presigned, so it must be
-    consumed in the same run). Resumable: finished pages and existing files
-    are skipped; failed pages/clips are retried on the next run.
+    consumed in the same run).
+
+    Robust against datasets-server overload episodes:
+      - patient per-page retries with backoff + Retry-After (see _ds_rows)
+      - page concurrency capped at 6 (the server rate-limits aggressive
+        clients; audio downloads keep the full worker count - different
+        endpoint)
+      - failed pages ARE retried on the next run (and one extra in-run pass
+        after a cooldown if some failed)
+      - circuit breaker: if the first pages all fail, abort early with a
+        clear "server overload, re-run later" message (progress is saved)
+      - pages whose audio failed are un-done so the next run re-fetches
+        just them (existing wavs on disk are always skipped)
+
+    Fully resumable run-to-run via raw/_lahgtna_state.json.
     """
     import requests
     os.makedirs(outdir, exist_ok=True)
@@ -481,6 +511,8 @@ def _fetch_lahgtna(root, outdir, workers=8):
                     state[k] = saved[k]
         except Exception:
             pass
+    # pages that failed in a previous run are retried THIS run
+    state["failed_pages"] = []
     sess = requests.Session()
     sess.headers.update({"User-Agent": "seed-vc-iraqi/1.0"})
 
@@ -488,7 +520,8 @@ def _fetch_lahgtna(root, outdir, workers=8):
     if not total:
         r0 = _ds_rows(sess, 0, 1)
         if r0 is None:
-            raise RuntimeError("datasets-server unreachable for Lahgtna v2 (retry later)")
+            raise RuntimeError("datasets-server unreachable for Lahgtna v2 "
+                               "(overload episode?) - wait a few minutes and re-run")
         total = int(r0.get("num_rows_total") or 0)
         if not total:
             raise RuntimeError("Lahgtna v2 train: no num_rows_total")
@@ -498,7 +531,7 @@ def _fetch_lahgtna(root, outdir, workers=8):
     page_len = 100
     n_pages = (total + page_len - 1) // page_len
     pending = [o for o in range(0, total, page_len)
-               if str(o) not in state["pages_done"] and o not in state["failed_pages"]]
+               if str(o) not in state["pages_done"]]
     cap = int(os.environ.get("IRAQI_LAHGTNA_MAX_PAGES", "0") or 0)
     if cap:
         pending = pending[:cap]
@@ -529,62 +562,103 @@ def _fetch_lahgtna(root, outdir, workers=8):
                 aud = aud[0]
             if idx is None or not isinstance(aud, dict) or not aud.get("src"):
                 continue
-            jobs.append((idx, aud["src"], row.get("transcript_text") or ""))
+            jobs.append((idx, aud["src"], row.get("transcript_text") or "", off))
         return jobs
 
     def audio_worker(job):
-        idx, url = job
+        idx, url, off = job
         out = os.path.join(outdir, f"lq_{idx:06d}.wav")
         if os.path.exists(out) and os.path.getsize(out) > 1024:
-            return idx, "skip"
-        for a in range(4):
+            return idx, "skip", off
+        for a in range(5):
             try:
                 data = sess.get(url, timeout=300).content
                 if data[:4] == b"RIFF" and len(data) > 1024:
                     open(out, "wb").write(data)
-                    return idx, "ok"
-                return idx, "bad"
+                    return idx, "ok", off
+                return idx, "bad", off
             except Exception:
                 time.sleep(2 + 2 * a)
-        return idx, "fail"
+        return idx, "fail", off
 
-    audio_futs = []
-    page_bar = Bar(max(len(pending), 1), tag="lahgtna", unit=" pages").start()
-    with ThreadPoolExecutor(max_workers=max(4, workers // 2)) as pages, \
-         ThreadPoolExecutor(max_workers=workers) as pool:
-        futs = {pages.submit(page_worker, o): o for o in pending}
+    def run_pass(offsets, pages_pool, audio_pool):
+        """page `offsets` and download their audio; returns (n_ok, n_fail, abort)"""
+        audio_futs = []
+        futs = {pages_pool.submit(page_worker, o): o for o in offsets}
+        n_ok = n_fail = 0
+        seen = ok_seen = 0
+        abort = None
+        page_bar = Bar(max(len(offsets), 1), tag="lahgtna", unit=" pages").start()
         for f in as_completed(futs):
             off = futs[f]
+            seen += 1
             try:
                 jobs = f.result()
             except Exception:
                 jobs = None
             if jobs is None:
                 state["failed_pages"].append(off)
-                page_bar.update(1, note=f"page {off} failed (retry next run)")
+                n_fail += 1
+                page_bar.update(1, note=f"page {off} failed")
+                if len(offsets) > 20 and seen >= 16 and ok_seen == 0:
+                    abort = ("datasets-server is rejecting Lahgtna paging (0 successes "
+                             f"in {seen} tries) - overload episode. Wait ~15-30 min and "
+                             "re-run this stage; progress is saved.")
+                    for pf in futs:
+                        pf.cancel()
+                    break
                 continue
+            ok_seen += 1
+            n_ok += 1
             state["pages_done"][str(off)] = 1
-            for idx, url, tx in jobs:
+            for idx, url, tx, off2 in jobs:
                 if tx and idx not in have:
                     have.add(idx)
                     with open(tx_path, "a", encoding="utf-8") as fh:
-                        fh.write(json.dumps({"idx": idx, "text": tx}, ensure_ascii=False) + "\n")
-                audio_futs.append(pool.submit(audio_worker, (idx, url)))
+                        fh.write(json.dumps({"idx": idx, "text": tx},
+                                            ensure_ascii=False) + "\n")
+                audio_futs.append(audio_pool.submit(audio_worker, (idx, url, off2)))
             page_bar.update(1, note=f"{len(state['pages_done'])}/{n_pages} pages")
         dl_bar = Bar(max(len(audio_futs), 1), tag="lahgtna", unit=" wavs").start()
+        failed_offs = set()
         for f in as_completed(audio_futs):
-            idx, st = f.result()
+            idx, st, off = f.result()
             if st == "fail":
                 state["failed_audio"].append(idx)
-            dl_bar.update(1, note="ok" if st != "fail" else f"row {idx} failed")
+                failed_offs.add(off)
+                dl_bar.update(1, note=f"row {idx} failed")
+            else:
+                dl_bar.update(1, note="ok")
         dl_bar.close()
-    page_bar.close()
+        page_bar.close()
+        # un-done pages that lost audio so the next run re-fetches just them
+        for off in failed_offs:
+            state["pages_done"].pop(str(off), None)
+        return n_ok, n_fail, abort
+
+    page_workers = max(2, min(6, workers))   # /rows is rate-limited: stay gentle
+    aborted = None
+    with ThreadPoolExecutor(max_workers=page_workers) as pages, \
+         ThreadPoolExecutor(max_workers=max(4, workers)) as pool:
+        n_ok, n_fail, aborted = run_pass(pending, pages, pool)
+        if aborted is None and n_fail and n_fail <= 50:
+            # one patient retry round for pages that failed during an episode
+            log(f"lahgtna: retrying {len(set(state['failed_pages']))} failed pages "
+                "after a 60s cooldown ...")
+            time.sleep(60)
+            retry = sorted(set(state["failed_pages"]))
+            state["failed_pages"] = []
+            n_ok2, n_fail2, aborted = run_pass(retry, pages, pool)
+            n_ok += n_ok2
+            n_fail = n_fail2
 
     state["failed_pages"] = sorted(set(state["failed_pages"]))
     state["failed_audio"] = sorted(set(state["failed_audio"]))
     json.dump(state, open(state_path, "w"))
     n = len([f for f in os.listdir(outdir) if f.endswith(".wav")])
     log(f"lahgtna: {n} wavs on disk | transcripts: {tx_path}")
+    if aborted:
+        raise RuntimeError(aborted)
     if state["failed_pages"] or state["failed_audio"]:
         raise RuntimeError(
             f"lahgtna: {len(state['failed_pages'])} pages / {len(state['failed_audio'])} clips "
@@ -1124,7 +1198,6 @@ def main():
 
 if __name__ == "__main__":
     main()
-
 PYEOF
 "$PY" -c "import ast; ast.parse(open('$ROOT/iraqi_pipeline.py').read())" \
   || fail "embedded pipeline is corrupted"

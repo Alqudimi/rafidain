@@ -10,7 +10,7 @@ from colab_cells_c import CELLS_C
 
 ALL = CELLS_A + CELLS_B + CELLS_C
 _HERE = Path(__file__).resolve().parent
-OUT = _HERE.parent / "rafidain" / "rafidain_colab_training.ipynb"
+OUT = _HERE.parent.parent / "rafidain_colab_training.ipynb"  # repo root
 OUT.parent.mkdir(parents=True, exist_ok=True)
 
 def to_source_lines(text):
@@ -92,7 +92,7 @@ for name, pat in [
             errors.append(f"embedded {name}: SyntaxError line {e.lineno}: {e.msg}")
 
 # 4) pipeline extraction regex must match the real repo script (both ubuntu & colab fallback URLs)
-repo_sh = _HERE.parent / "rafidain" / "seed_vc_iraqi_ubuntu.sh"
+repo_sh = _HERE.parent.parent / "seed_vc_iraqi_ubuntu.sh"  # repo root
 if repo_sh.exists():
     txt = repo_sh.read_text(encoding="utf-8")
     m = re.search(r"cat > \"\$ROOT/iraqi_pipeline\.py\" <<'PYEOF'\n(.*?)\nPYEOF\n", txt, re.S)

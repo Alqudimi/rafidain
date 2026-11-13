@@ -13,7 +13,7 @@ print("\n=== TEST 1: drive sync watcher ===")
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import importlib.util
 # extract embedded script from the built notebook (exactly what users will get)
-nb = json.loads(Path(__file__).resolve().parent.parent / "rafidain" / "rafidain_colab_training.ipynb".read_text(encoding="utf-8"))
+nb = json.loads((Path(__file__).resolve().parent.parent.parent / "rafidain_colab_training.ipynb").read_text(encoding="utf-8"))
 concat = "\n\n".join("".join(c["source"]) for c in nb["cells"] if c["cell_type"] == "code")
 m = re.search(r"SYNC_SCRIPT\.write_text\(r'''\n(.*?)\n''', encoding", concat, re.S)
 assert m, "sync script not found in notebook"
