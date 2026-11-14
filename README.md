@@ -2,11 +2,11 @@
 
 # رافِدَين (Rafidain) — نظام تحويل الصوت اللحظي للهجة العراقية
 
-**باك-إند إنتاجي، بمعمارية Clean Architecture ملتزمة بمبادئ SOLID، لتحويل الصوت (Voice Conversion) في المكالمات المباشرة — مبني على نموذج [Seed-VC](https://github.com/Plachtta/seed-vc)‏ `seed-uvit-tat-xlsr-tiny` ومُهيّأ للهجة العراقية مع خط ضبط دقيق (Fine-tuning) كامل.**
+**باك-إند إنتاجي، بمعمارية Clean Architecture ملتزمة بمبادئ SOLID، لتحويل الصوت (Voice Conversion) في المكالمات المباشرة — مبني على نموذج [Seed-VC](https://github.com/Plachtta/seed-vc)‏ ومُهيّأ للهجة العراقية مع خط ضبط دقيق (Fine-tuning) كامل — دفتر Colab يدرّب النسخة الأقوى `seed-uvit-whisper-base-f0-44k` (شرط نبرة F0، 44.1kHz).**
 
 | | |
 |---|---|
-| النموذج | seed-uvit-tat-xlsr-tiny (25M باراميتر، 22050Hz، مشفّر محتوى XLSR-large، فوكودر HiFT) |
+| النموذج | الخدمة: seed-uvit-tat-xlsr-tiny (25M، 22050Hz) للتشغيل الخفيف — التدريب بالدفتر: seed-uvit-whisper-base-f0-44k (نحو 78M، F0-conditioned، فوكودر BigVGAN 44kHz) |
 | زمن الوصول الحرجي | **~430ms** شاملاً الاستدلال (قياس منشور رسمياً للنموذج نفسه بنفس إعدادات البروفايل `balanced`) |
 | بيانات التدريب الجاهزة | ≈390 ساعة كلام عراقي مُدقّق عبر 5 مصادر — التفاصيل في [DATA_SOURCES.md](DATA_SOURCES.md) |
 | بروتوكول النقل | REST لدورة الحياة + WebSocket للصوت اللحظي (PCM s16le أحادي 16kHz) |
@@ -232,8 +232,10 @@ rafidain/                        # جذر المستودع (github.com/Alqudimi/
 ├── docker/                       # Dockerfile (base/full) + docker-compose
 ├── .github/workflows/ci.yml      # lint + tests + smoke
 ├── rafidain_runpod_training.ipynb  # دفتر RunPod الشامل للتدريب (v2.1 — بيانات موسّعة)
-├── rafidain_colab_training.ipynb   # دفتر Google Colab للتدريب (v3 — تدريب داخل النواة بالاستيراد المباشر + أرشيف بيانات جاهز، بلا عمليات خلفية وبلا subprocess)
+├── rafidain_colab_training.ipynb   # دفتر Google Colab الشامل للتدريب (v3.1 — uv داخل النواة + نموذج base f0 + تدريب داخل النواة)
 ├── DATA_SOURCES.md               # مصادر بيانات اللهجة العراقية المُدقّقة (≈390 ساعة) + منهجية الفحص
+├── rafidain_runpod_training.ipynb  # دفتر RunPod الشامل للتدريب (v2.1 — بيانات موسّعة)
+├── rafidain_colab_training.ipynb   # دفتر Google Colab الشامل للتدريب (v2.1)
 ├── seed_vc_iraqi_colab.sh        # تنزيل بيانات اللهجة العراقية + التدريب (Colab)
 ├── seed_vc_iraqi_ubuntu.sh       # تنزيل بيانات اللهجة العراقية + التدريب (Ubuntu)
 └── seed_vc_iraqi_windows.ps1     # تنزيل بيانات اللهجة العراقية + التدريب (Windows)

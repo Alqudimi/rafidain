@@ -891,19 +891,26 @@ def cmd_stats(args):
 # checkpoint prefetch
 # ---------------------------------------------------------------------------
 PREFETCH = [
-    ("Plachta/Seed-VC", "model", "DiT_uvit_tat_xlsr_ema.pth"),
+    ("Plachta/Seed-VC", "model", "DiT_seed_v2_uvit_whisper_base_f0_44k_bigvgan_pruned_ft_ema.pth"),
     ("Plachta/Seed-VC", "model", "se_db.pt"),
     ("funasr/campplus", "model", "campplus_cn_common.bin"),
     ("myshell-ai/OpenVoiceV2", "model", "converter/checkpoint.pth"),
     ("myshell-ai/OpenVoiceV2", "model", "converter/config.json"),
-    ("FunAudioLLM/CosyVoice-300M", "model", "hift.pt"),
+    ("lj1995/VoiceConversionWebUI", "model", "rmvpe.pt"),
+    ("openai/whisper-base", "model", "config.json"),
+    ("openai/whisper-base", "model", "model.safetensors"),
+    ("openai/whisper-base", "model", "preprocessor_config.json"),
+    ("openai/whisper-base", "model", "generation_config.json"),
+    ("openai/whisper-base", "model", "tokenizer_config.json"),
+    ("openai/whisper-base", "model", "vocab.json"),
+    ("openai/whisper-base", "model", "merges.txt"),
 ]
 
 def cmd_prefetch(args):
     repo = args.repo
     os.environ["HF_HUB_CACHE"] = os.path.join(repo, "checkpoints", "hf_cache")
     from huggingface_hub import hf_hub_download, snapshot_download
-    items = list(PREFETCH) + [("facebook/wav2vec2-xls-r-300m", "snapshot", "*")]
+    items = list(PREFETCH)
     bar = Bar(len(items), tag="prefetch", unit=" ckpt").start()
     for repo_id, rtype, fn in PREFETCH:
         for a in range(3):
@@ -919,15 +926,15 @@ def cmd_prefetch(args):
         bar.update(1, note=f"{repo_id}/{fn}")
     for a in range(3):
         try:
-            bar.note = "facebook/wav2vec2-xls-r-300m (~1.27 GB)"
-            p = snapshot_download("facebook/wav2vec2-xls-r-300m",
-                                  cache_dir=os.path.join(repo, "checkpoints", "hf_cache"))
-            log(f"prefetch: facebook/wav2vec2-xls-r-300m -> {p}")
+            bar.note = "nvidia/bigvgan_v2_44khz_128band_512x (~1.2 GB)"
+            p = snapshot_download("nvidia/bigvgan_v2_44khz_128band_512x",
+                                  cache_dir=os.path.join(repo, "checkpoints"))
+            log(f"prefetch: nvidia/bigvgan_v2_44khz_128band_512x -> {p}")
             break
         except Exception as e:
-            log(f"prefetch retry {a+1} for wav2vec2-xls-r-300m: {e}")
+            log(f"prefetch retry {a+1} for bigvgan: {e}")
             time.sleep(3)
-    bar.update(1, note="wav2vec2-xls-r-300m")
+    bar.update(1, note="bigvgan_v2_44khz")
     bar.close(note="all checkpoints cached")
 
 # ---------------------------------------------------------------------------
@@ -940,18 +947,18 @@ def cmd_export(args):
         log(f"export: ft_model.pth not found in {src} — did training finish?")
         sys.exit(1)
     ts = time.strftime("%Y%m%d_%H%M%S")
-    out = args.out or os.path.join(os.path.dirname(src), "iraqi_seed_vc_tiny_" + ts)
+    out = args.out or os.path.join(os.path.dirname(src), "iraqi_seed_vc_base_f0_" + ts)
     os.makedirs(out, exist_ok=True)
-    shutil.copyfile(ft, os.path.join(out, "seed_uvit_tat_xlsr_tiny_iraqi.pth"))
+    shutil.copyfile(ft, os.path.join(out, "seed_uvit_whisper_base_f0_44k_iraqi.pth"))
     cfg = os.path.join(src, os.path.basename(args.config))
     if not os.path.exists(cfg):
         cfg = args.config
-    shutil.copyfile(cfg, os.path.join(out, "config_dit_mel_seed_uvit_xlsr_tiny.yml"))
+    shutil.copyfile(cfg, os.path.join(out, os.path.basename(args.config)))
     stats_path = os.path.join(args.data_dir, "_stats.json")
     stats = json.load(open(stats_path)) if os.path.exists(stats_path) else {}
     report = {
         "exported_at": time.strftime("%Y-%m-%d %H:%M:%S"),
-        "base_model": "seed-uvit-tat-xlsr-tiny (Plachta/Seed-VC DiT_uvit_tat_xlsr_ema.pth)",
+        "base_model": "seed-uvit-whisper-base-f0-44k (Plachta/Seed-VC DiT_seed_v2_uvit_whisper_base_f0_44k_bigvgan_pruned_ft_ema.pth)",
         "task": "Iraqi dialect adaptation fine-tune",
         "run_dir": os.path.abspath(src),
         "training_data": stats,
@@ -963,17 +970,17 @@ def cmd_export(args):
     }
     json.dump(report, open(os.path.join(out, "training_report.json"), "w"),
               indent=2, ensure_ascii=False)
-    readme = f"""# Seed-VC Iraqi — fine-tuned seed-uvit-tat-xlsr-tiny
+    readme = f"""# Seed-VC Iraqi — fine-tuned seed-uvit-whisper-base-f0-44k
 Exported: {report['exported_at']}
 
-Weights : seed_uvit_tat_xlsr_tiny_iraqi.pth
-Config  : config_dit_mel_seed_uvit_xlsr_tiny.yml
+Weights : seed_uvit_whisper_base_f0_44k_iraqi.pth
+Config  : config_dit_mel_seed_uvit_whisper_base_f0_44k.yml
 Report  : training_report.json
 
 ## الاستخدام (Usage)
-python inference.py \\
-  --checkpoint {os.path.abspath(os.path.join(out, 'seed_uvit_tat_xlsr_tiny_iraqi.pth'))} \\
-  --config     {os.path.abspath(os.path.join(out, 'config_dit_mel_seed_uvit_xlsr_tiny.yml'))} \\
+python inference.py --f0-condition true --auto-f0-adjust true \\
+  --checkpoint {os.path.abspath(os.path.join(out, 'seed_uvit_whisper_base_f0_44k_iraqi.pth'))} \\
+  --config     {os.path.abspath(os.path.join(out, os.path.basename(args.config)))} \\
   --source <wav> --target <reference-wav> --output ./out
 
 Web UI:
@@ -1011,7 +1018,8 @@ def cmd_verify(args):
            "--source", os.path.abspath(src),
            "--target", os.path.abspath(ref),
            "--output", os.path.abspath(outdir),
-           "--diffusion-steps", "16", "--fp16", "true"]
+           "--diffusion-steps", "16", "--fp16", "true",
+           "--f0-condition", "true", "--auto-f0-adjust", "true"]
     log(f"verify: {' '.join(cmd[1:])}")
     p = subprocess.run(cmd, cwd=repo)
     if p.returncode == 0:
@@ -1057,7 +1065,7 @@ def main():
 
     p = sub.add_parser("export")
     p.add_argument("--run-dir", required=True)
-    p.add_argument("--config", default="configs/presets/config_dit_mel_seed_uvit_xlsr_tiny.yml")
+    p.add_argument("--config", default="configs/presets/config_dit_mel_seed_uvit_whisper_base_f0_44k.yml")
     p.add_argument("--data-dir", default="iraqi_seedvc/data/iraqi_finetune")
     p.add_argument("--out", default=None)
     p.set_defaults(fn=cmd_export)
@@ -1066,7 +1074,7 @@ def main():
     p.add_argument("--repo", default="seed-vc")
     p.add_argument("--run-dir", required=True)
     p.add_argument("--ckpt", required=True)
-    p.add_argument("--config", default="configs/presets/config_dit_mel_seed_uvit_xlsr_tiny.yml")
+    p.add_argument("--config", default="configs/presets/config_dit_mel_seed_uvit_whisper_base_f0_44k.yml")
     p.add_argument("--data-dir", default="iraqi_seedvc/data/iraqi_finetune")
     p.set_defaults(fn=cmd_verify)
 

@@ -8,12 +8,6 @@
 خط البيانات `iraqi_pipeline.py` المضمّن في سكربتات التثبيت، أو من دفترَي التدريب
 (`rafidain_runpod_training.ipynb` / `rafidain_colab_training.ipynb`).
 
-> **لقطة جاهزة للتدريب مباشرة**: `rafidain_current_sources_ready.tar.gz` (4.89GB)
-> يحتوي ناتج مرحلة الجلب والمعالجة كاملاً — 56,856 مقطع Opus 24kHz / 387.8 ساعة
-> (YODAS-IQ كاملة 334.2 ساعة + Lahgtna جزئية 39.5 + safaa 3.4 + shiekh 6.0 +
-> youssef 4.7) مع `_prep_index.jsonl` و`_stats.json`. دفتر Colab (نسخة 2) يستعمله
-> مباشرة بدل إعادة الجلب والمعالجة؛ الخرّوفا ستُضم في الأرشيف النهائي القادم.
-
 ## ١) المصادر الخمسة الجاهزة
 
 | # | المصدر | الحجم | الخصائص | الترخيص/الوصول |
