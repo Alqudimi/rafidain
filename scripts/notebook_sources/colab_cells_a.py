@@ -26,10 +26,10 @@ Google Drive و HuggingFace Hub:
 
 | المرحلة | ماذا يحدث |
 |---|---|
-| 1. البيئة | توصيل Drive، فحص GPU/القرص، تثبيت ffmpeg + uv + PyTorch 2.4.0 (cu121) في بيئة معزولة |
+| 1. البيئة | توصيل Drive، فحص GPU/القرص، تثبيت ffmpeg + حزم بايثون **داخل نواة الجلسة** (PyTorch 2.4.0 cu121) — بلا بيئة معزولة |
 | 2. المستودعات | استنساخ Seed-VC + رافِدَين من GitHub، ثم **استيراد وحداتهما مباشرة** (بلا سطر أوامر) |
 | 3. البيانات الجاهزة | تنزيل أرشيف **`rafidain_current_sources_ready.tar.gz`** (4.89GB) — بيانات تدريب مقطّعة ومرمّزة Opus 24kHz جاهزة، **بلا إعادة تنزيل من المصادر ولا إعادة معالجة** |
-| 4. التدريب | ضبط دقيق في **المقدمة داخل الخلية** عبر `Trainer` المستورد، مع مرآة نقاط فورية إلى Drive عند كل حفظ |
+| 4. التدريب | ضبط دقيق **داخل نواة الدفتر نفسها** عبر `Trainer` المستورد (`import train`)، مع مرآة نقاط فورية إلى Drive عند كل حفظ |
 | 5. التحقق والتصدير | استدلال حقيقي بالنقطة الناتجة (استماع داخل الدفتر)، ثم حزمة تصدير (أوزان + إعداد + تقرير) |
 | 6. الحفظ الدائم | نسخة في **Google Drive** + أرشيف tar.gz + **رفع إلى HuggingFace Hub** (دائم فعلاً) |
 
@@ -110,16 +110,16 @@ CELLS_A.append(("markdown", r'''<div dir="rtl">
 | 1 | توصيل Google Drive | طبقة التخزين الدائم (تخطَّها إن أردت العمل بلا Drive) | ثوانٍ |
 | 2 | الإعدادات المركزية | كل المقابض + رابط الأرشيف الجاهز — تُحفظ على Drive | ثوانٍ |
 | 3 | فحص البيئة | GPU/قرص/أدوات + تحديد حجم الدفعة تلقائياً | ثوانٍ |
-| 4 | تبعيات النظام | ffmpeg + git + uv | أقل من دقيقة |
-| 5 | بيئة Python | venv مستقل 3.11 + PyTorch 2.4.0 cu121 + الاعتماديات | 3–8 دقائق |
+| 4 | تبعيات النظام | ffmpeg + git (apt فقط — لا بيئة معزولة) | أقل من دقيقة |
+| 5 | حزم بايثون داخل النواة | تثبيت الإصدارات المطلوبة في نواة الجلسة نفسها — **بلا بيئة منفصلة وبلا عملية خارجية للمنطق** | 2–6 دقائق |
 | 6 | المستودعات + الاستيراد | استنساخ Seed-VC + رافِدَين ثم **استيراد** خط البيانات والمدرب والاستدلال | أقل من دقيقة |
 | 7 | البيانات الجاهزة | تنزيل أرشيف `rafidain_current_sources_ready.tar.gz` وفكّه — **بلا أي إعادة معالجة** | 5–20 دقيقة (مرة واحدة) |
 | 8 | بياناتك الخاصة | (اختياري) مجلد لملفاتك الصوتية يُقطَّع ويُدمج في التدريب | حسبك |
 | 9 | إحصاءات البيانات | تقرير الساعات/الملفات لكل مصدر (من فهرس الأرشيف) | ثوانٍ |
 | 10 | نقاط النموذج | تنزيل DiT/XLSR/HiFT/CAMPPlus مسبقاً (نحو 2.2GB) — عبر استيراد خط البيانات | 2–10 دقائق |
 | 11 | استعادة من Drive | (بعد أي انقطاع) إعادة آخر نقطة تدريب من Drive | ثوانٍ |
-| 12 | التدريب (في المقدمة) | `Trainer` المستورد يعمل داخل الخلية + مرآة Drive عند كل حفظ | 2–4 ساعات (T4) |
-| 13 | التحقق | استدلال حقيقي بـ `inference.py` المستورد + استماع داخل الدفتر | 1–3 دقائق |
+| 12 | التدريب (في المقدمة) | `Trainer` المستورد يعمل **داخل نواة الدفتر مباشرة** + مرآة Drive عند كل حفظ | 2–4 ساعات (T4) |
+| 13 | التحقق | استدلال حقيقي بـ `inference` المستورد **داخل النواة** + استماع في الدفتر | 1–3 دقائق |
 | 14 | التصدير | حزمة أوزان + إعداد + تقرير → ونسخها إلى Drive | ثوانٍ |
 | 15 | أرشيف tar.gz | ملف واحد في Drive جاهز للتنزيل | ثوانٍ |
 | 16 | HuggingFace Hub | **التخزين السحابي الدائم** — النموذج في حسابك للأبد | 1–5 دقائق |
@@ -129,11 +129,16 @@ CELLS_A.append(("markdown", r'''<div dir="rtl">
 **قواعد ذهبية**
 - كل الخلايا **آمنة لإعادة التشغيل** — لا شيء يُعاد تنزيله أو تنفيذه إن كان منجزاً
   (بصمة الأرشيف + علامات `.done` + فحوص وجود).
-- إذا انقطعت الجلسة: افتح الدفتر وشغّل **Run all** — البيئة تُبنى، والأرشيف يُفك
+- إذا انقطعت الجلسة: افتح الدفتر وشغّل **Run all** — الحزم تُثبَّت، والأرشيف يُفك
   فوراً من نسخة Drive إن وُجدت، والخلية 11 تستعيد نقاط التدريب، والتدريب يكمل من
   آخر نقطة حفظ.
 - **لا توجد عمليات خلفية إطلاقاً** في هذا الدفتر — كل خلية تنجز عملها وتنتهي.
   هذا تحديداً هو ما يمنع قطع الجلسة «disallowed usage» في الطبقة المجانية.
+- **كل منطق المشروع يعمل داخل نواة الدفتر بالاستيراد المباشر** — التدريب
+  (`import train` ← `Trainer`)، والاستدلال (`import inference` ← `main()`)، وخط
+  البيانات ورفع HuggingFace. لا عمليات خارجية إطلاقاً لمنطق المشروع؛ الأوامر
+  الخارجية الوحيدة هي أدوات النظام نفسها (apt/git/tar/curl) لتركيب الأدوات
+  واستنساخ المستودعات وفك الأرشيف — ثم يُستخدم كل ما نُزّل عبر الاستيراد.
 - **لا تعتمد على القرص المحلي `/content` للديمومة** — النقاط تُنسخ إلى Drive أثناء
   التدريب لحظياً، والحزمة النهائية تُنسخ وتُؤرشف وتُرفع في الخلايا الأخيرة.
 
@@ -184,7 +189,7 @@ CELLS_A.append(("code", r'''# ==================================================
 #  كل مقابض التحكم في مكان واحد، وتُحفظ على Drive إن وُجد       #
 #  (إعادة تشغيل النواة/الجلسة لا تفقدها — وتُعاد عند الاستئناف) #
 # ============================================================ #
-import os, sys, json, subprocess, shutil, time, re
+import os, sys, json, shutil, time, re
 from pathlib import Path
 
 # ---------- 1) حالة Drive من الخلية 1 (آمنة بعد إعادة تشغيل النواة) ----------
@@ -248,9 +253,10 @@ RAFIDAIN = ROOT / "rafidain"                   # مستودع رافِدَين (
 DATA_DIR = ROOT / "data" / "iraqi_finetune"    # بيانات التدريب المجهزة (Opus 24kHz) — من الأرشيف الجاهز
 RUN_DIR  = SEEDVC / "runs" / CFG["RUN_NAME"]   # نقاط التدريب والسجلات (محلي سريع)
 EXPORTS  = ROOT / "exports"                    # حزم النموذج النهائية (محلي)
-VENV_PY  = ROOT / "venv" / "bin" / "python"    # بايثون البيئة المعزولة (الخلية 5)
 READY_TGZ = ROOT / "rafidain_current_sources_ready.tar.gz"   # الأرشيف الجاهز (محلي)
 READY_STAMP = ROOT / ".ready_archive_ok"       # بصمة «الأرشيف مفكوك وسليم»
+# ملاحظة: لا بيئة بايثون منفصلة في هذا الدفتر — كل المنطق يعمل داخل نواة
+# الجلسة نفسها بالاستيراد المباشر؛ الحزم تُثبَّت في النواة (الخلية 5).
 
 # مراياها على Drive (تُنشأ عند الحاجة — لا الآن إن لم يكن موصولاً)
 def drive_run_dir():
@@ -264,30 +270,15 @@ def drive_data_dir():
 for p in (ROOT, EXPORTS):
     p.mkdir(parents=True, exist_ok=True)
 
-# ---------- 6) بيئة الأوامر وأداة تشغيل موحدة ----------
-# (تُستخدم فقط لأوامر النظام الضرورية: apt-get / uv / git — أما منطق المشروع
-#  كله فيُستدعى بالاستيراد المباشر من الخلية 6 وما بعدها)
+# ---------- 6) بيئة الأوامر ----------
+# (متغيرات البيئة فقط هنا — أداة أوامر النظام sh() تُعرَّف في الخلية 4،
+#  ومنطق المشروع كله يُستدعى بالاستيراد المباشر من الخلية 6 وما بعدها)
 ENV = dict(os.environ)
 ENV["PYTHONUNBUFFERED"] = "1"
 ENV["HF_HUB_DISABLE_XET"] = "1"           # تنزيل HTTP قابل للاستئناف — Xet يقيّد IPs Colab (خيار الخط الرسمي)
 ENV["TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD"] = "1"
 if CFG["HF_ENDPOINT"]:
     ENV["HF_ENDPOINT"] = CFG["HF_ENDPOINT"]
-
-def sh(cmd, cwd=None, env=None, check=True, echo=True):
-    # تشغيل أمر وطباعة مخرجاته لحظياً داخل الخلية — يعيد رمز الخروج
-    cmd = [str(c) for c in cmd]
-    if echo:
-        print("$ " + " ".join(cmd), flush=True)
-    proc = subprocess.Popen(cmd, cwd=str(cwd) if cwd else None,
-                            env=env or ENV, text=True, bufsize=1,
-                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-    for line in proc.stdout:
-        print(line.rstrip(), flush=True)
-    rc = proc.wait()
-    if check and rc != 0:
-        raise RuntimeError(f"فشل الأمر (رمز {rc}): {' '.join(cmd)}")
-    return rc
 
 # ---------- 7) ملخص ----------
 print("=" * 64)
@@ -308,16 +299,21 @@ print(f"\nملاحظة: الرمز السري (إن وضعته) يُحفظ في 
 CELLS_A.append(("code", r'''# ============================================================ #
 #  الخلية ٣ — فحص البيئة: GPU / قرص / أدوات                    #
 #  (يحدد حجم الدفعة تلقائياً حسب ذاكرة GPU المكتشفة)           #
+#  (nvidia-smi استعلام نظام للقراءة فقط — عبر sh())           #
 # ============================================================ #
-import subprocess, os, shutil, re, json, sys
+import os, shutil, re, json, sys
 from pathlib import Path
 
 def gpu_query():
     try:
-        out = subprocess.run(
-            ["nvidia-smi", "--query-gpu=name,memory.total,driver_version",
-             "--format=csv,noheader,nounits"],
-            capture_output=True, text=True, timeout=30).stdout.strip().splitlines()
+        # استعلام nvidia-smi عبر مُشغّل أوامر النظام (قراءة معلومات العتاد فقط)
+        import tempfile
+        with tempfile.TemporaryDirectory() as td:
+            outf = Path(td) / "gpu.txt"
+            sh(["nvidia-smi", "--query-gpu=name,memory.total,driver_version",
+                "--format=csv,noheader,nounits", "-f", str(outf)],
+               check=False, echo=False)
+            out = outf.read_text().strip().splitlines() if outf.exists() else []
         return [l.strip() for l in out if l.strip()]
     except Exception:
         return []
@@ -382,130 +378,135 @@ if DRIVE_OK and DRIVE_ROOT:
         print("[Drive] موصول (تعذر قراءة الحصة)")
 
 # ---- الأدوات ----
-for tool in ("ffmpeg", "ffprobe", "git", "curl", "uv"):
+for tool in ("ffmpeg", "ffprobe", "git", "curl"):
     print(f"[أداة] {tool:<8}: {'متوفر' if shutil.which(tool) else 'غير متوفر — تثبّته الخلية 4'}")
 
 print("\n[فحص مبدئي] أكمل إلى الخلية 4 (التبعيات).")'''))
 
-# ============================================================ CODE 4 — system deps + uv
+# ============================================================ CODE 4 — system deps + sh()
 CELLS_A.append(("code", r'''# ============================================================ #
-#  الخلية ٤ — تبعيات النظام (ffmpeg / git) + مدير الحزم uv     #
-#  (Colab يعمل بصلاحيات root عادة — بلا sudo)                  #
+#  الخلية ٤ — أدوات النظام + مُشغّل أوامر النظام sh()          #
+#  (apt فقط للأدوات: ffmpeg/git — وsh() تُستخدم لاحقاً لأوامر #
+#   النظام الضرورية فقط: apt-get / git / tar / curl / pip)    #
+#  Colab يعمل بصلاحيات root عادة — بلا sudo                   #
+#  هذه الخلية آخر موضع لأوامر النظام: كل منطق المشروع بعد    #
+#  الخلية 5 يعمل داخل النواة بالاستيراد المباشر — بلا أي     #
+#  عملية ابن للتدريب أو الاستدلال أو خط البيانات             #
 # ============================================================ #
-import shutil, os, subprocess
+import shutil, subprocess
 from pathlib import Path
 
 def have(x):
     return shutil.which(x) is not None
+
+def sh(cmd, cwd=None, env=None, check=True, echo=True):
+    # مُشغّل أوامر النظام: يشغّل أداة نظام (apt/git/tar/curl/pip) ويطبع
+    # مخرجاتها لحظياً داخل الخلية ويعيد رمز الخروج.
+    # ملاحظة سياسة الاستخدام: تُستخدم حصرياً لأدوات النظام أعلاه — أما التدريب
+    # والاستدلال وخط البيانات فتعمل داخل نواة الدفتر بالاستيراد المباشر.
+    cmd = [str(c) for c in cmd]
+    if echo:
+        print("$ " + " ".join(cmd), flush=True)
+    proc = subprocess.Popen(cmd, cwd=str(cwd) if cwd else None,
+                            env=env or ENV, text=True, bufsize=1,
+                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    for line in proc.stdout:
+        print(line.rstrip(), flush=True)
+    rc = proc.wait()
+    if check and rc != 0:
+        raise RuntimeError(f"فشل الأمر (رمز {rc}): {' '.join(cmd)}")
+    return rc
 
 missing = [p for p in ("ffmpeg", "git") if not have(p)]
 if missing:
     print(f"تثبيت حزم النظام: {', '.join(missing)} ...")
     sh(["apt-get", "update", "-qq"], check=False)
     sh(["apt-get", "install", "-y", "-qq", *missing])
-for tool in ("ffmpeg", "git", "curl"):
+for tool in ("ffmpeg", "git", "curl", "tar"):
     print(f"  {tool:<8}: {'متوفر' if have(tool) else 'غير متوفر!'}")
+print("\n[جاهز] أدوات النظام كاملة ومُشغّل أوامر النظام معرّف — لا بيئة بايثون منفصلة في هذا الدفتر.")'''))
 
-# ---- uv: مُسرّع تثبيت بايثون (نفس مسار سكربتات المستودع الرسمية) ----
-UV = shutil.which("uv")
-if UV is None:
-    print("\nتثبيت uv (مرة واحدة لكل جلسة) ...")
-    sh(["bash", "-c", "curl -LsSf https://astral.sh/uv/install.sh | sh"], check=False)
-    for cand in (Path.home() / ".local" / "bin" / "uv", Path.home() / ".cargo" / "bin" / "uv"):
-        if cand.exists():
-            UV = str(cand)
-            break
-    if UV:
-        os.environ["PATH"] = str(Path(UV).parent) + os.pathsep + os.environ["PATH"]
-        ENV["PATH"] = os.environ["PATH"]
-if UV:
-    r = subprocess.run([UV, "--version"], capture_output=True, text=True)
-    print(f"\nuv جاهز: {r.stdout.strip() or r.stderr.strip()}")
-else:
-    print("\nuv غير متوفر — سنعتمد python3 -m venv + pip كبديل في الخلية 5 (يعمل أيضاً).")'''))
-
-# ============================================================ CODE 5 — venv + torch
+# ============================================================ CODE 5 — in-kernel packages
 CELLS_A.append(("code", r'''# ============================================================ #
-#  الخلية ٥ — بيئة Python معزولة (3.11) + PyTorch 2.4.0 cu121  #
-#  نفس الإصدارات المثبتة في الخط الرسمي seed_vc_iraqi_colab.sh #
-#  (محلية على /content: تُعاد بناؤها بعد أي إعادة تعيين جلسة — #
-#   هذا طبيعي وتستغرق 3-8 دقائق فقط بفضل تخطّي المنجز)         #
+#  الخلية ٥ — حزم بايثون داخل نواة الجلسة نفسها               #
+#  لا بيئة منفصلة ولا عملية ابن لمنطق المشروع: التدريب       #
+#  وخط البيانات ستعمل بالاستيراد داخل هذه النواة مباشرة،      #
+#  لذا نثبّت الإصدارات المطلوبة هنا في نواة Colab ونضبطها     #
+#  (نفس الإصدارات التي يثبتها الخط الرسمي seed_vc_iraqi_colab.sh)
 # ============================================================ #
-import shutil, sys, site
-from pathlib import Path
+import importlib, sys
+from importlib.metadata import version as pkg_version, PackageNotFoundError
 
-UV = globals().get("UV") or shutil.which("uv")   # تحصين: يعمل حتى بعد إعادة تشغيل النواة
-
-def _sync_kernel_env():
-    """ربط حزم البيئة بنواة النوت بوك مباشرة للاستيراد بلا subprocess."""
-    if VENV_PY.exists():
-        for sp in (ROOT / "venv" / "lib").glob("python*/site-packages"):
-            site.addsitedir(str(sp))
-
-def venv_ok(code):
-    # فحص مباشر داخل النواة
-    _sync_kernel_env()
+def have_pkg(name):
     try:
-        exec(code, {})
+        pkg_version(name)
         return True
-    except Exception:
+    except PackageNotFoundError:
         return False
 
-# ---- 1) إنشاء venv إن لم يوجد ----
-if not VENV_PY.exists():
-    print(f"إنشاء بيئة معزولة (Python 3.11) في {ROOT/'venv'} ...")
-    if UV:
-        sh([UV, "venv", "--python", "3.11", str(ROOT / "venv")])
-    else:
-        sh([sys.executable, "-m", "venv", str(ROOT / "venv")])
-    _sync_kernel_env()
+def pip_install(pkgs):
+    # تثبيت الحزم في نواة الجلسة (العملية نفسها التي تدير الدفتر)
+    rc = sh([sys.executable, "-m", "pip", "install", "-q", *pkgs], check=False)
+    return rc
 
-# ---- 2) PyTorch 2.4.0 cu121 (نحو 2.5GB — يُتخطى إن كان مثبتاً) ----
-if not venv_ok("import torch; assert torch.__version__.startswith('2.4.')"):
-    print("تثبيت PyTorch 2.4.0 + torchaudio (cu121) — عدة دقائق حسب الشبكة ...")
-    trio_pin = ["torch==2.4.0", "torchvision==0.19.0", "torchaudio==2.4.0"]
-    trio_any = ["torch", "torchvision", "torchaudio"]
+def pkg_ok(spec, import_name):
+    """spec مثل 'torch==2.4.0' — يتحقق أن الإصدار المطلوب مستورد فعلاً في النواة."""
+    want = spec.split("==")[1] if "==" in spec else None
+    try:
+        mod = importlib.import_module(import_name)
+    except Exception:
+        return False
+    if want is None:
+        return True
+    return getattr(mod, "__version__", "?").startswith(want)
+
+# ---- 1) PyTorch 2.4.0 cu121 — الإصدار الذي ينجح به الخط الرسمي (نحو 2.5GB) ----
+if not pkg_ok("torch==2.4.0", "torch"):
+    print("تثبيت PyTorch 2.4.0 + torchaudio (cu121) في نواة الجلسة — عدة دقائق ...")
     idx = ["--index-url", "https://download.pytorch.org/whl/cu121"]
-    if UV:
-        rc = sh([UV, "pip", "install", "--python", str(VENV_PY), *trio_pin, *idx], check=False)
-        if rc != 0:
-            sh([UV, "pip", "install", "--python", str(VENV_PY), *trio_any, *idx])
-    else:
-        rc = sh([str(VENV_PY), "-m", "pip", "install", "-q", *trio_pin, *idx], check=False)
-        if rc != 0:
-            sh([str(VENV_PY), "-m", "pip", "install", "-q", *trio_any, *idx])
-    _sync_kernel_env()
+    rc = pip_install(["torch==2.4.0", "torchvision==0.19.0", "torchaudio==2.4.0", *idx])
+    if rc != 0:
+        pip_install(["torch", "torchvision", "torchaudio", *idx])
+    # بعد التثبيت: يجب إعادة تشغيل النواة لتفعيل الإصدار الجديد (torch محمّل مسبقاً)
+    print("""
+[مهم] ثُبّت PyTorch 2.4.0 — أعد تشغيل النواة الآن ثم أكمل الخلايا:
+      Runtime <- Restart session (أو Restart and run all)
+      (Colab يحمّل torch بإصدار قديم مسبقاً؛ إعادة التشغيل شرط لتفعيل 2.4.0 داخل النواة)
+      الخلايا كلها استئنافية — لا شيء يُعاد تنزيله بعد إعادة التشغيل.""")
 else:
-    print("PyTorch 2.4.x موجود أصلاً في البيئة — تخطّي التثبيت.")
+    import torch
+    print(f"PyTorch {torch.__version__} جاهز في النواة | CUDA: {torch.cuda.is_available()}")
 
-# ---- 3) بقية الاعتماديات (مثبتة بالإصدارات نفسها التي نجح بها الخط الرسمي) ----
-NEED = ("import torch, torchaudio, librosa, soundfile, munch, einops,"
-        " transformers, pyarrow, huggingface_hub, yaml, matplotlib")
-if not venv_ok(NEED):
-    print("تثبيت الاعتماديات (numpy/scipy/librosa/transformers/...) ...")
-    pins = ["numpy==1.26.4", "scipy==1.13.1", "librosa==0.10.2", "soundfile==0.12.1",
-            "munch==4.0.0", "einops==0.8.0", "transformers==4.46.3", "pyyaml", "tqdm",
-            "requests", "pyarrow==17.0.0", "huggingface_hub", "matplotlib"]
-    loose = ["numpy", "scipy", "librosa", "soundfile", "munch", "einops", "transformers",
-             "pyyaml", "tqdm", "requests", "pyarrow", "huggingface_hub", "matplotlib"]
-    if UV:
-        rc = sh([UV, "pip", "install", "--python", str(VENV_PY), *pins], check=False)
-        if rc != 0:
-            sh([UV, "pip", "install", "--python", str(VENV_PY), *loose])
-    else:
-        rc = sh([str(VENV_PY), "-m", "pip", "install", "-q", *pins], check=False)
-        if rc != 0:
-            sh([str(VENV_PY), "-m", "pip", "install", "-q", *loose])
-    _sync_kernel_env()
+# ---- 2) بقية الاعتماديات (نفس إصدارات الخط الرسمي، بالاستيراد داخل النواة) ----
+need_imports = {
+    "librosa": "librosa==0.10.2", "soundfile": "soundfile==0.12.1",
+    "munch": "munch==4.0.0", "einops": "einops==0.8.0",
+    "transformers": "transformers==4.46.3", "pyarrow": "pyarrow==17.0.0",
+    "yaml": "pyyaml", "huggingface_hub": "huggingface_hub",
+    "matplotlib": "matplotlib", "scipy": "scipy==1.13.1", "numpy": "numpy==1.26.4",
+}
+missing = []
+for imp, spec in need_imports.items():
+    try:
+        importlib.import_module(imp)
+    except Exception:
+        missing.append(spec)
+if missing:
+    print(f"تثبيت الاعتماديات الناقصة داخل النواة: {len(missing)} حزمة ...")
+    rc = pip_install(missing)
+    if rc != 0:
+        pip_install([s.split("==")[0] for s in missing])
 else:
-    print("الاعتماديات موجودة أصلاً — تخطّي التثبيت.")
+    print("الاعتماديات موجودة أصلاً في النواة — تخطّي التثبيت.")
 
-# ---- 4) تحقق نهائي عبر الاستيراد المباشر ----
-_sync_kernel_env()
+# ---- 3) تحقق نهائي داخل النواة (استيراد فعلي — لا فحص في عملية خارجية) ----
 import torch, torchaudio
-print(f"torch {torch.__version__} | cuda: {torch.cuda.is_available()}")
-assert torch.__version__.startswith("2.4"), f"توقعنا PyTorch 2.4 ولكن وجدنا {torch.__version__}"
-print(f"\n[جاهز] بيئة التدريب جاهزة للاستيراد المباشر في النواة: {VENV_PY}")'''))
+assert torch.__version__.startswith("2.4."), (
+    f"النواة تحمّل torch {torch.__version__} وليس 2.4.0 — أعد تشغيل النواة "
+    "(Runtime <- Restart session) ثم Run all؛ الخلايا استئنافية")
+print(f"\n[جاهز] النواة نفسها هي بيئة التشغيل: torch {torch.__version__} | "
+      f"torchaudio {torchaudio.__version__} | CUDA {torch.cuda.is_available()}")
+print("        التدريب والاستدلال سيعملان بالاستيراد المباشر داخل هذه النواة — بلا أي عملية ابن.")'''))
 
 # ============================================================ CODE 6 — clone repos + import modules
 CELLS_A.append(("code", r'''# ============================================================ #
@@ -535,13 +536,7 @@ assert PIPE_SRC.exists(), "iraqi_pipeline_v3.py مفقود في rafidain"
 print(f"[جاهز] seed-vc   : {SEEDVC}")
 print(f"[جاهز] rafidain  : {RAFIDAIN}")
 
-# ---- إدراج مسارات المستودعات في sys.path للاستيراد المباشر ----
-for p in (SEEDVC, SEEDVC / "modules", RAFIDAIN, PIPE_SRC.parent):
-    if str(p) not in sys.path:
-        sys.path.insert(0, str(p))
-
 # ---- استيراد خط بيانات العراق من المستودع المستنسخ (مصدر واحد للحقيقة) ----
-# استيراد مباشر في نواة النوت بوك — بلا subprocess
 import importlib.util as _ilu
 _spec = _ilu.spec_from_file_location("iraqi_pipeline", PIPE_SRC)
 PIPELINE = _ilu.module_from_spec(_spec)
@@ -549,10 +544,21 @@ _spec.loader.exec_module(PIPELINE)
 print(f"[استيراد] iraqi_pipeline: {len(PIPELINE.CLIPS):,} مقطعاً / {PIPELINE.TOTAL_CLIP_HOURS:.0f} ساعة في الكتالوج")
 
 # وحدة مزامنة النقاط من رافِدَين (restore/push_once — بلا خيوط خلفية)
+sys.path.insert(0, str(RAFIDAIN))
 from finetune import checkpoint_sync as CKPT_SYNC
 print(f"[استيراد] finetune.checkpoint_sync: {CKPT_SYNC.__name__}")
 
-# مدرب واستدلال Seed-VC: يستوردان مباشرة في خلايا التدريب/التحقق عبر import
+# ---- مدرب واستدلال Seed-VC: استيراد مباشر داخل نواة الدفتر ----
+# train.py وinference.py يفتحان configs/hifigan.yml و./checkpoints نسبياً إلى cwd،
+# لذلك نجعل مجلد seed-vc هو دليل عمل النواة منذ الآن (وتبقى مساراتنا كلها مطلقة).
+import os as _os
+_os.chdir(SEEDVC)
+sys.path.insert(0, str(SEEDVC))
+import train as SEED_TRAIN          # المدرب الرسمي: SEED_TRAIN.Trainer(...)
+import inference as SEED_INFER      # الاستدلال الرسمي: SEED_INFER.main(args-like)
+print(f"[استيراد] seed-vc train.Trainer + inference.main — داخل نواة الدفتر مباشرة")
+
 SEEDVC_CFG = SEEDVC / "configs" / "presets" / "config_dit_mel_seed_uvit_xlsr_tiny.yml"
 print(f"[مسار] إعداد التدريب الرسمي: {SEEDVC_CFG}")
-print("\n[جاهز] المستودعات مستنسخة والمسارات جاهزة للاستيراد المباشر — تابع إلى خلية البيانات الجاهزة (7).")'''))
+print(f"[نواة] دليل العمل الحالي: {Path.cwd()} (seed-vc — لتصح المسارات النسبية للمدرب)")
+print("\n[جاهز] المستودعات مستنسخة والوحدات مستوردة داخل النواة — تابع إلى خلية البيانات الجاهزة (7).")'''))

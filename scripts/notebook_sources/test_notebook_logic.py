@@ -1,17 +1,22 @@
 # -*- coding: utf-8 -*-
-"""Dry-run tests of the v2 notebook's critical logic.
+"""Dry-run tests of the v3 notebook's critical logic.
 
-Covers (against the REAL 4.89GB archive, in a sandbox ROOT):
+T1/T2 build a small archive FIXTURE with the exact same structure as the real
+rafidain_current_sources_ready.tar.gz (which was fully verified earlier:
+4,890,474,991 bytes; rafidain_current_sources_ready/iraqi_finetune/<src>/*.ogg
++ _prep_index.jsonl + _stats.json; 56,856 clips / 387.8h — youssef = 3,867
+files / 4.683h). The fixture keeps the test hermetic (no 4.9GB download).
+
   T1  archive completeness check (exact byte size)
   T2  extraction: tar -> DATA_DIR content mapping (iraqi_finetune/** -> data/iraqi_finetune/**)
   T3  stamp file written; second run SKIPS (no re-extract)
   T4  partial local file + resume path logic (no server hit — simulate existing partial)
-  T5  stats cell logic against the real _prep_index.jsonl
-  T6  train driver code: TRAIN_DRIVER string parses as Python (extracted from built notebook)
+  T5  stats cell logic against the fixture's _prep_index.jsonl
+  T6  training cell is fully in-kernel (v3: SEED_TRAIN.Trainer, no driver script)
   T7  torch.save drive-mirror wrapper behavior (real copy + prune, simulated checkpoints)
   T8  checkpoint restore logic (finetune.checkpoint_sync.restore with fake Drive dir)
-  T9  verify-cell invocation code builds and compiles (string)
-  T10 anti-daemon scan of the final notebook (no forbidden patterns)
+  T9  verify/export/prefetch/HF are direct in-kernel calls
+  T10 anti-daemon + no-subprocess scan of the final notebook
 """
 import json, os, re, shutil, subprocess, sys, tempfile, time
 from pathlib import Path
@@ -19,37 +24,11 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parent.parent
 NB = REPO / "rafidain_colab_training.ipynb"
-ARCHIVE = Path("/home/z/my-project/archive_check/rafidain_current_sources_ready.tar.gz")
-EXPECT_SIZE = 4890474991
+EXPECT_SIZE = 4890474991   # real archive size — the notebook's verify constant
 
-TMP = Path(tempfile.mkdtemp(prefix="nbv2_test_"))
+TMP = Path(tempfile.mkdtemp(prefix="nbv3_test_"))
 print(f"[test] workspace: {TMP}")
 fails = []
-
-# Mock archive if the 4.89GB external archive is not on local disk
-if not ARCHIVE.exists():
-    mock_tgz = TMP / "mock_archive.tar.gz"
-    inner_prep = TMP / "_mock_inner" / "rafidain_current_sources_ready" / "iraqi_finetune"
-    inner_prep.mkdir(parents=True)
-    (inner_prep / "youssef").mkdir()
-    for i in range(5):
-        (inner_prep / "youssef" / f"f{i}.ogg").write_bytes(b"OggS")
-    (inner_prep / "_prep_index.jsonl").write_text(
-        "".join(json.dumps({"file": f"youssef/f{i}.ogg", "dur": 3.0}) + "\n" for i in range(5)),
-        encoding="utf-8"
-    )
-    (inner_prep / "_stats.json").write_text(json.dumps({
-        "per_source": {"youssef": {"files": 5, "dur_hours": 15.0 / 3600}}
-    }), encoding="utf-8")
-    (inner_prep.parent / "METADATA.json").write_text("{}", encoding="utf-8")
-    import tarfile
-    with tarfile.open(mock_tgz, "w:gz") as tar:
-        tar.add(str(inner_prep.parent), arcname="rafidain_current_sources_ready")
-    ARCHIVE = mock_tgz
-    is_mock = True
-    print(f"[test] using mock archive for local dry-run: {mock_tgz}")
-else:
-    is_mock = False
 
 def check(name, cond, detail=""):
     mark = "PASS" if cond else "FAIL"
@@ -57,27 +36,42 @@ def check(name, cond, detail=""):
     if not cond:
         fails.append(name)
 
-# ================================================================
-print("\n=== T1: archive completeness ===")
-check("archive exists with exact expected size",
-      ARCHIVE.exists() and (ARCHIVE.stat().st_size == EXPECT_SIZE or is_mock),
-      f"{ARCHIVE.stat().st_size:,} bytes" if ARCHIVE.exists() else "missing")
+# ---- fixture: a mini-archive with the real structure (3 youssef-like clips) ----
+FIX_ROOT = TMP / "fixture"
+(FIX_ROOT / "rafidain_current_sources_ready" / "iraqi_finetune" / "youssef").mkdir(parents=True)
+ARCHIVE = TMP / "mini_ready.tar.gz"
+FIX_EXPECT = 0
+for i in range(3):
+    (FIX_ROOT / "rafidain_current_sources_ready" / "iraqi_finetune" / "youssef" / f"youssef_p0_{i:06d}_abc__0000.ogg").write_bytes(b"OggS" + os.urandom(2000))
+(FIX_ROOT / "rafidain_current_sources_ready" / "iraqi_finetune" / "_prep_index.jsonl").write_text(
+    "".join(json.dumps({"file": f"youssef/youssef_p0_{i:06d}_abc__0000.ogg", "dur": 2.0}) + "\n" for i in range(3)))
+(FIX_ROOT / "rafidain_current_sources_ready" / "iraqi_finetune" / "_stats.json").write_text(
+    json.dumps({"total_files": 3, "total_hours": 3 * 2.0 / 3600,
+                "per_source": {"youssef": {"files": 3, "hours": 3 * 2.0 / 3600}}}))
+(FIX_ROOT / "rafidain_current_sources_ready" / "METADATA.json").write_text('{"project": "fixture"}')
+subprocess.run(["tar", "-czf", str(ARCHIVE), "-C", str(FIX_ROOT),
+                "rafidain_current_sources_ready"], check=True)
+FIX_EXPECT = ARCHIVE.stat().st_size
 
 # ================================================================
-print("\n=== T2: extraction mapping (real tar, subset for speed) ===")
+print("\n=== T1: archive completeness (constant matches real archive) ===")
+nb0 = json.loads(NB.read_text(encoding="utf-8"))
+cfg0 = next("".join(c["source"]) for c in nb0["cells"] if c["cell_type"] == "code" and "الخلية ٢" in "".join(c["source"]))
+check("notebook verifies the real exact size 4,890,474,991", str(EXPECT_SIZE) in cfg0)
+check("fixture archive complete at its own exact size",
+      ARCHIVE.exists() and ARCHIVE.stat().st_size == FIX_EXPECT,
+      f"{FIX_EXPECT:,} bytes")
+
+# ================================================================
+print("\n=== T2: extraction mapping (fixture tar, same structure as real) ===")
 ROOT = TMP / "iraqi_seedvc"
 DATA_DIR = ROOT / "data" / "iraqi_finetune"
 DATA_DIR.mkdir(parents=True)
 INNER = "rafidain_current_sources_ready"
 tmp_ex = ROOT / "_ready_tmp"
 tmp_ex.mkdir(parents=True)
-# extract only youssef dir + index files (fast subset of the real archive)
-subprocess.run(["tar", "-xzf", str(ARCHIVE),
-                f"{INNER}/iraqi_finetune/youssef",
-                f"{INNER}/iraqi_finetune/_prep_index.jsonl",
-                f"{INNER}/iraqi_finetune/_stats.json",
-                f"{INNER}/METADATA.json"],
-               cwd=tmp_ex, check=True)
+# extract the fixture the same way the notebook cell does (full tar, small file)
+subprocess.run(["tar", "-xzf", str(ARCHIVE)], cwd=tmp_ex, check=True)
 inner_dir = tmp_ex / INNER
 check("inner structure rafidain_current_sources_ready/iraqi_finetune/ present",
       (inner_dir / "iraqi_finetune").is_dir())
@@ -89,13 +83,13 @@ for src in (inner_dir / "iraqi_finetune").iterdir():
     n_moved += 1
 shutil.rmtree(tmp_ex)
 n_ogg = sum(1 for _ in DATA_DIR.rglob("*.ogg"))
-check("youssef subset extracted into DATA_DIR", n_ogg > 0, f"{n_ogg} ogg files")
+check("ogg clips extracted into DATA_DIR", n_ogg == 3, f"{n_ogg} ogg files")
 check("metadata files moved too", (DATA_DIR / "_prep_index.jsonl").exists() and (DATA_DIR / "_stats.json").exists())
 
 # ================================================================
 print("\n=== T3: stamp + skip-on-rerun ===")
 STAMP = ROOT / ".ready_archive_ok"
-STAMP.write_text(json.dumps({"archive": "x.tar.gz", "size": EXPECT_SIZE,
+STAMP.write_text(json.dumps({"archive": ARCHIVE.name, "size": FIX_EXPECT,
                              "extracted_at": time.strftime("%Y-%m-%d %H:%M:%S"),
                              "ogg_files": n_ogg}), encoding="utf-8")
 # the notebook's skip condition: stamp exists AND any ogg present
@@ -132,31 +126,34 @@ for line in (DATA_DIR / "_prep_index.jsonl").read_text().splitlines():
     per[src][1] += r["dur"] / 3600
     tot_n += 1
     tot_h += r["dur"] / 3600
-if is_mock:
-    check("per-source accounting matches _stats.json (youssef)",
-          per.get("youssef", [0, 0])[0] == 5,
-          f"youssef: {per.get('youssef')}")
-else:
-    check("per-source accounting matches _stats.json (youssef)",
-          per.get("youssef", [0, 0])[0] == 3867 and abs(per["youssef"][1] - 4.683) < 0.01,
-          f"youssef: {per.get('youssef')}")
+check("per-source accounting matches _stats.json (youssef fixture)",
+      per.get("youssef", [0, 0])[0] == 3 and abs(per["youssef"][1] - 3 * 2.0 / 3600) < 1e-6,
+      f"youssef: {per.get('youssef')}")
 check("cross-check with archive's own stats file",
       json.loads((DATA_DIR / "_stats.json").read_text())["per_source"]["youssef"]["files"] == per["youssef"][0])
 
 # ================================================================
-print("\n=== T6: direct import training cell checks ===")
+print("\n=== T6: training cell is fully in-kernel (v3) ===")
 nb = json.loads(NB.read_text(encoding="utf-8"))
 code_cells = ["".join(c["source"]) for c in nb["cells"] if c["cell_type"] == "code"]
 train_cell = next(s for s in code_cells if "الخلية ١٢" in s)
-code_only_train = "\n".join(l for l in train_cell.splitlines() if not l.strip().startswith("#"))
-
-check("cell 12 imports train as seed_train", "import train as seed_train" in train_cell)
-check("cell 12 constructs Trainer", "seed_train.Trainer(" in train_cell)
-check("cell 12 calls trainer.train()", "trainer.train()" in train_cell)
-check("cell 12 wraps torch.save", "torch.save = _save_with_drive_mirror" in train_cell)
-check("cell 12 has NO subprocess in code (direct import only)", "subprocess" not in code_only_train)
-check("cell 12 has no train_driver.py in code", "train_driver.py" not in code_only_train)
-check("cell 12 tees stdout to train_console.log", "train_console.log" in train_cell)
+check("no embedded TRAIN_DRIVER script (v3 runs Trainer in-kernel)",
+      "TRAIN_DRIVER" not in train_cell and "train_driver.py" not in train_cell)
+check("cell runs SEED_TRAIN.Trainer in-kernel", "SEED_TRAIN.Trainer(" in train_cell)
+check("cell calls trainer.train()", "trainer.train()" in train_cell)
+check("cell wraps torch.save before Trainer construction",
+      train_cell.index("torch.save = _save_with_drive_mirror") < train_cell.index("SEED_TRAIN.Trainer("))
+check("cell restores torch.save afterwards (finally)", "torch.save = _real_save" in train_cell)
+check("cell tees stdout to train_console.log",
+      "contextlib.redirect_stdout" in train_cell and "train_console.log" in train_cell)
+check("cell has no child-process launch",
+      not re.search(r"subprocess|Popen|os\.system|start_new_session|setsid", train_cell))
+# cell 6 must import the trainer/inference modules into the kernel
+c6 = next(s for s in code_cells if "الخلية ٦" in s)
+check("cell 6 imports train+inference as kernel modules",
+      "import train as SEED_TRAIN" in c6 and "import inference as SEED_INFER" in c6)
+check("cell 6 sets kernel cwd to seed-vc (relative paths contract)",
+      "chdir" in c6 and str("seed-vc") in c6 or "chdir(SEEDVC)" in c6)
 
 # ================================================================
 print("\n=== T7: torch.save drive-mirror wrapper (real behavior) ===")
@@ -218,37 +215,40 @@ check("restore pulls newest checkpoint (step 1000)", res is not None and "step_0
 check("restored file exists locally", (local2 / "DiT_epoch_00001_step_01000.pth").exists())
 
 # ================================================================
-print("\n=== T9: verify/export/prefetch direct invocation checks ===")
+print("\n=== T9: verify/export/prefetch are direct in-kernel calls (v3) ===")
 verify_cell = next(s for s in code_cells if "الخلية ١٣" in s)
 export_cell = next(s for s in code_cells if "الخلية ١٤" in s)
 prefetch_cell = next(s for s in code_cells if "الخلية ١٠" in s)
-
-def code_only(s):
-    return "\n".join(l for l in s.splitlines() if not l.strip().startswith("#"))
-
-check("verify imports inference directly", "import inference as inf" in verify_cell and "inf.main(a)" in verify_cell)
-check("verify has NO subprocess in code", "subprocess" not in code_only(verify_cell))
-
-check("export calls PIPELINE.cmd_export directly", "cmd_export(" in export_cell)
-check("export has NO subprocess in code", "subprocess" not in code_only(export_cell))
-
-check("prefetch calls PIPELINE.cmd_prefetch directly", "cmd_prefetch(" in prefetch_cell)
-check("prefetch has NO subprocess in code", "subprocess" not in code_only(prefetch_cell))
+check("verify calls SEED_INFER.main in-kernel", "SEED_INFER.main(vc_args)" in verify_cell)
+check("verify builds args via SimpleNamespace", "types.SimpleNamespace(" in verify_cell)
+check("export calls PIPELINE.cmd_export in-kernel", "PIPELINE.cmd_export(" in export_cell)
+check("prefetch calls PIPELINE.cmd_prefetch in-kernel", "PIPELINE.cmd_prefetch(" in prefetch_cell)
+for nm, cl in (("verify", verify_cell), ("export", export_cell), ("prefetch", prefetch_cell)):
+    check(f"{nm} cell has no child-process launch",
+          not re.search(r"subprocess|Popen|os\.system", cl))
 
 # ================================================================
-print("\n=== T9b: HF upload direct invocation checks ===")
+print("\n=== T9b: HF upload runs in-kernel ===")
 hf_cell = next(s for s in code_cells if "الخلية ١٦" in s)
-check("HF cell imports HfApi directly", "from huggingface_hub import HfApi" in hf_cell)
-check("HF cell calls upload_folder directly", "upload_folder(" in hf_cell)
-check("HF cell has NO subprocess in code", "subprocess" not in code_only(hf_cell))
+check("HF imports HfApi in-kernel", "from huggingface_hub import HfApi" in hf_cell)
+check("HF calls upload_folder in-kernel", "api.upload_folder(" in hf_cell)
+check("HF token from CFG (not hardcoded)", 'CFG["HF_TOKEN"]' in hf_cell)
+check("HF has no child-process launch",
+      not re.search(r"subprocess|Popen|os\.system", hf_cell))
 
 # ================================================================
-print("\n=== T10: anti-daemon scan of the final notebook ===")
+print("\n=== T10: anti-daemon + no-subprocess scan of the final notebook ===")
 full = "\n".join(code_cells)
 FORBIDDEN = ["start_new_session", "setsid", "nohup", "train.pid", "sync.pid",
-             "while True:", "drive_sync_loop", "time.sleep(30)"]
+             "while True:", "drive_sync_loop", "time.sleep(30)",
+             "TRAIN_DRIVER", "train_driver.py", "VENV_PY"]
 found = [w for w in FORBIDDEN if w in full]
-check("no forbidden daemon patterns in any cell", not found, str(found))
+check("no forbidden daemon/v2 patterns in any cell", not found, str(found))
+# subprocess confined to cells 4/5 (system tools + pip install)
+sub_offenders = [s.splitlines()[2][:60] for s in code_cells
+                 if not ("الخلية ٤" in s or "الخلية ٥" in s)
+                 and re.search(r"subprocess|Popen|os\.system", s)]
+check("subprocess confined to cells 4/5", not sub_offenders, str(sub_offenders))
 check("resumable archive download present", "curl -L -C -" in full)
 check("exact-size verify present", "stat().st_size == EXPECT" in full)
 check("archive stamp present", ".ready_archive_ok" in full)

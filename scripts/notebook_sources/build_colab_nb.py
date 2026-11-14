@@ -20,10 +20,7 @@ from colab_cells_c import CELLS_C
 ALL = CELLS_A + CELLS_B + CELLS_C
 _HERE = Path(__file__).resolve().parent
 OUT = _HERE.parent.parent / "rafidain_colab_training.ipynb"  # repo root
-OUT_V2 = _HERE.parent.parent / "notbooks" / "rafidain_colab_training_v2.ipynb"
-OUT_V1 = _HERE.parent.parent / "notbooks" / "rafidain_colab_training.ipynb"
 OUT.parent.mkdir(parents=True, exist_ok=True)
-OUT_V2.parent.mkdir(parents=True, exist_ok=True)
 
 def to_source_lines(text):
     """nbformat source: list of lines each ending with \\n (except maybe last)."""
@@ -66,12 +63,8 @@ nb = {
     "cells": cells,
 }
 
-nb_json = json.dumps(nb, ensure_ascii=False, indent=1)
-OUT.write_text(nb_json, encoding="utf-8")
-OUT_V2.write_text(nb_json, encoding="utf-8")
-OUT_V1.write_text(nb_json, encoding="utf-8")
+OUT.write_text(json.dumps(nb, ensure_ascii=False, indent=1), encoding="utf-8")
 print(f"[build] wrote {OUT}  ({OUT.stat().st_size/1024:.1f} KB)")
-print(f"[build] wrote {OUT_V2} and {OUT_V1}")
 print(f"[build] {len(cells)} cells = {n_md} markdown + {n_code} code")
 
 # ================================================================
@@ -93,7 +86,9 @@ for i, c in enumerate(code_cells, 1):
         bad_line = src.splitlines()[e.lineno-1][:120] if e.lineno and e.lineno <= len(src.splitlines()) else "?"
         errors.append(f"code cell #{i} (id={c['id']}): SyntaxError line {e.lineno}: {e.msg}\n   -> {bad_line}")
 
-# 3) anti-daemon policy scan — these are the patterns that get free Colab killed
+# 3) anti-daemon + no-subprocess policy scan
+#    daemon patterns get free Colab killed; subprocess for project logic is
+#    forbidden by design — everything must run inside the notebook kernel via imports.
 full_concat = "\n\n".join("".join(c["source"]) for c in code_cells)
 FORBIDDEN = [
     ("start_new_session", "detached process launch"),
@@ -106,15 +101,37 @@ FORBIDDEN = [
     ("time.sleep(300)",   "watcher sleep loop"),
     ("drive_sync_loop",   "v1 background sync watcher"),
     ("deadline = time.time() + 11", "v1 11-hour wait loop"),
+    ("TRAIN_DRIVER",      "v2 out-of-kernel driver script (v3 runs Trainer in-kernel)"),
+    ("train_driver.py",   "v2 out-of-kernel driver script (v3 runs Trainer in-kernel)"),
+    ("VENV_PY",           "v2 isolated venv (v3 installs into the session kernel)"),
+    ("venv",              "isolated venv leftovers (v3 installs into the session kernel)"),
 ]
 for pat, why in FORBIDDEN:
     if pat in full_concat:
-        # the only allowed sleep is inside retry logic of downloads — none expected here
-        errors.append(f"forbidden daemon pattern present: {pat!r} ({why})")
+        errors.append(f"forbidden pattern present: {pat!r} ({why})")
+
+# 3b) subprocess usage: ONLY allowed in cells 4 (apt), 5 (pip into the kernel's own
+#     python — same interpreter, package management only), and the sh() helper in
+#     cell 2. Project logic (pipeline/train/inference/export/HF) must never spawn.
+ALLOWED_SUBPROCESS_CELLS = ("الخلية ٤", "الخلية ٥")   # header markers
+for c in code_cells:
+    src = "".join(c["source"])
+    if any(m in src for m in ALLOWED_SUBPROCESS_CELLS):
+        continue
+    for bad in ("subprocess.run", "subprocess.Popen", "subprocess.check_output",
+                "subprocess.call", "os.system", "get_ipython().system("):
+        if bad in src:
+            line = next((l.strip()[:100] for l in src.splitlines() if bad in l), "?")
+            errors.append(f"subprocess forbidden in logic cells: {bad!r} in cell {c['id'][:8]} -> {line}")
+
+# 3c) sh() helper lives in cell 4 (system tools) — cell 2 must be subprocess-free
+c4_src = "".join(code_cells[3]["source"]) if len(code_cells) > 3 else ""
+if "def sh(" not in c4_src:
+    errors.append("cell 4 must define sh() for system-tool commands (apt/git/tar/curl/pip)")
 
 # curl -C - resume usage is REQUIRED in the archive cell
 if "curl -L -C -" not in full_concat:
-    errors.append("archive cell lost its resumable download (curl -L -C -)")
+    errors.append("archive cell lost its resumable download (curl -L -)")
 
 # exact-size verification required
 if "READY_ARCHIVE_SIZE" not in full_concat or "stat().st_size == EXPECT" not in full_concat:
@@ -124,51 +141,39 @@ if "READY_ARCHIVE_SIZE" not in full_concat or "stat().st_size == EXPECT" not in 
 if ".ready_archive_ok" not in full_concat:
     errors.append("archive stamp file (.ready_archive_ok) missing — would re-extract every run")
 
-def _code_only(text):
-    return "\n".join(l for l in text.splitlines() if not l.strip().startswith("#"))
+# training must run Trainer IN-KERNEL: module imported in cell 6, called in cell 12
+c6_src = "".join(code_cells[5]["source"]) if len(code_cells) > 5 else ""
+for token in ("import train as SEED_TRAIN", "import inference as SEED_INFER"):
+    if token not in c6_src:
+        errors.append(f"cell 6 must import in-kernel module: {token}")
 
-# training must import train as a module and call Trainer(...).train() directly without subprocess
 train_cell = next(("\n".join(c["source"]) for c in code_cells if "الخلية ١٢" in "".join(c["source"])), "")
 if train_cell:
-    for token in ("import train as seed_train", "seed_train.Trainer(", "trainer.train()",
+    for token in ("SEED_TRAIN.Trainer(", "trainer.train()", "contextlib.redirect_stdout",
                   "_save_with_drive_mirror", "torch.save = _save_with_drive_mirror",
-                  "ft_model.pth", "train_console.log"):
+                  "ft_model.pth", "train_console.log", "torch.save = _real_save"):
         if token not in train_cell:
             errors.append(f"training cell missing token: {token}")
-    if "subprocess" in _code_only(train_cell):
-        errors.append("training cell must NOT use subprocess — must call Trainer directly via import")
-    if "train_driver.py" in _code_only(train_cell):
-        errors.append("training cell must NOT write temporary train_driver.py script")
 else:
     errors.append("training cell (12) not found")
 
-# verify/export/prefetch cells must invoke via direct import, not subprocess or CLI
+# verify/export/prefetch/HF cells must invoke in-kernel via imports
 verify_cell = next(("\n".join(c["source"]) for c in code_cells if "الخلية ١٣" in "".join(c["source"])), "")
 export_cell = next(("\n".join(c["source"]) for c in code_cells if "الخلية ١٤" in "".join(c["source"])), "")
 prefetch_cell = next(("\n".join(c["source"]) for c in code_cells if "الخلية ١٠" in "".join(c["source"])), "")
-
-if verify_cell:
-    for token in ("import inference as inf", "inf.main(a)"):
-        if token not in verify_cell:
-            errors.append(f"verify cell missing token: {token}")
-    if "subprocess" in _code_only(verify_cell):
-        errors.append("verify cell must NOT use subprocess — must invoke inference.py directly via import")
-
-if export_cell:
-    if "cmd_export" not in export_cell:
-        errors.append("export cell missing token: cmd_export")
-    if "subprocess" in _code_only(export_cell):
-        errors.append("export cell must NOT use subprocess — must call cmd_export directly")
-
-if prefetch_cell:
-    if "cmd_prefetch" not in prefetch_cell:
-        errors.append("prefetch cell missing token: cmd_prefetch")
-    if "subprocess" in _code_only(prefetch_cell):
-        errors.append("prefetch cell must NOT use subprocess — must call cmd_prefetch directly")
-
-# no CLI invocation of iraqi_pipeline.py as a script (must be imported)
-if re.search(r"VENV_PY,\s*PIPE\b", full_concat) or re.search(r"PIPE\b[^)]*small", full_concat):
-    errors.append("pipeline still invoked as a CLI script somewhere — must be imported")
+hf_cell = next(("\n".join(c["source"]) for c in code_cells if "الخلية ١٦" in "".join(c["source"])), "")
+for token in ("SEED_INFER.main(vc_args)", "types.SimpleNamespace"):
+    if verify_cell and token not in verify_cell:
+        errors.append(f"verify cell missing in-kernel token: {token}")
+for token in ("PIPELINE.cmd_export(",):
+    if export_cell and token not in export_cell:
+        errors.append(f"export cell missing in-kernel token: {token}")
+for token in ("PIPELINE.cmd_prefetch(",):
+    if prefetch_cell and token not in prefetch_cell:
+        errors.append(f"prefetch cell missing in-kernel token: {token}")
+for token in ("from huggingface_hub import HfApi", "api.upload_folder("):
+    if hf_cell and token not in hf_cell:
+        errors.append(f"HF cell missing in-kernel token: {token}")
 
 # 4) pipeline import path consistency: the notebook imports from the cloned repo
 repo_pipeline = _HERE.parent.parent / "scripts" / "data_research" / "iraqi_pipeline_v3.py"
@@ -206,7 +211,7 @@ for c in nb2["cells"]:
             warnings.append(f"cell {c['id'][:8]} contains '{bad}'")
 
 # 7) key invariants across cells (names defined in cell 2 and used later)
-must_define_in_cfg = ["def sh(", "ENV[", "CFG_PATH", "VENV_PY", "RUN_DIR", "DATA_DIR", "EXPORTS",
+must_define_in_cfg = ["ENV[", "CFG_PATH", "RUN_DIR", "DATA_DIR", "EXPORTS",
                       "SEEDVC", "RAFIDAIN", "READY_ARCHIVE_URL", "READY_ARCHIVE_SIZE",
                       "READY_TGZ", "READY_STAMP", "drive_data_dir"]
 cfg_src = "".join(nb2["cells"][4]["source"])  # code cell 2 = index 4 (md,md,md,code1,code2)

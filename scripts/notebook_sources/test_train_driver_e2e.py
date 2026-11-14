@@ -1,151 +1,171 @@
 # -*- coding: utf-8 -*-
-"""End-to-end simulation of the notebook's TRAIN_DRIVER against a mock seed-vc repo.
-
-Builds a fake seed-vc tree with a train.py that has the same import surface as the
-real one (Trainer class with the same constructor signature + train() saving
-checkpoints through torch.save), then runs the ACTUAL driver code extracted from
-the built notebook with a mock torch module. Verifies:
-  * chdir to SEEDVC happens (cwd-relative paths work)
-  * Trainer constructed with the right args
-  * train() runs, torch.save is wrapped BEFORE Trainer construction
-  * checkpoints land in RUN_DIR and get mirrored to the fake Drive
-  * ft_model.pth mirrored + train_console.log written
-  * exit code 0
+"""In-kernel training test: run the notebook's ACTUAL cell-12 code inside a
+simulated notebook kernel against a mock seed-vc repo (train.py with the same
+Trainer surface) and a mock torch — proving:
+  * SEED_TRAIN.Trainer is constructed with the right args (in-process, no child)
+  * torch.save is wrapped BEFORE Trainer construction (mirror covers all saves)
+  * stdout is teed to train_console.log
+  * checkpoints land in RUN_DIR; last KEEP=2 mirrored + pruned on fake Drive
+  * ft_model.pth + log mirrored at the end
+  * torch.save restored after training (finally block)
+  * ZERO subprocess/os.spawn usage anywhere in logic cells
 """
-import json, os, re, shutil, subprocess, sys, tempfile
+import json, os, re, sys, tempfile
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parent.parent
 NB = REPO / "rafidain_colab_training.ipynb"
 
-TMP = Path(tempfile.mkdtemp(prefix="driver_e2e_"))
-print(f"[e2e] workspace: {TMP}")
+TMP = Path(tempfile.mkdtemp(prefix="inkernel_"))
+print(f"[inkernel] workspace: {TMP}")
 
-# ---- 1) fake seed-vc repo ----
+fails = []
+def check(name, cond, detail=""):
+    print(f"  [{'PASS' if cond else 'FAIL'}] {name}" + (f" — {detail}" if detail else ""))
+    if not cond:
+        fails.append(name)
+
+# ---- 1) fake seed-vc repo with the real Trainer surface ----
 SEEDVC = TMP / "seed-vc"
 (SEEDVC / "configs" / "presets").mkdir(parents=True)
-(SEEDVC / "configs").mkdir(exist_ok=True)
-# the real train.py opens configs/hifigan.yml relative to cwd at build_vocoder time
 (SEEDVC / "configs" / "hifigan.yml").write_text("hift: {}\nf0_predictor: {}\n")
 (SEEDVC / "configs" / "presets" / "config_dit_mel_seed_uvit_xlsr_tiny.yml").write_text(
     "log_dir: \"./runs/\"\npreprocess_params: {sr: 22050}\n")
-# mock train.py — same constructor signature as the real one
-(SEEDVC / "train.py").write_text(
+TRAIN_PY = SEEDVC / "train.py"
+TRAIN_PY.write_text(
     '''
-import os, sys, json, torch
+import os
+import torch
 
 class Trainer:
     def __init__(self, config_path, pretrained_ckpt_path, data_dir, run_name,
                  batch_size=0, num_workers=0, steps=1000, save_interval=500,
                  max_epochs=1000, device="cuda:0"):
-        self.config_path = config_path
-        self.pretrained = pretrained_ckpt_path
-        self.data_dir = data_dir
-        self.run_name = run_name
-        self.batch_size = batch_size
-        self.steps = steps
-        self.save_interval = save_interval
-        self.device = device
-        # prove cwd was set to SEEDVC by the driver
-        assert os.path.exists("configs/hifigan.yml"), "driver must chdir to SEEDVC"
-        # prove torch.save was wrapped BEFORE Trainer construction
+        assert os.path.exists("configs/hifigan.yml"), "kernel cwd must be SEEDVC"
+        assert os.path.exists(config_path), config_path
+        # torch.save must already be wrapped by the cell before construction
         assert torch.save.__name__ == "_save_with_drive_mirror", (
             f"torch.save not wrapped yet: {torch.save.__name__}")
-        # the config must exist (driver passed the right path)
-        assert os.path.exists(config_path), config_path
-
+        self.__dict__.update(locals())
     def train(self):
         os.makedirs(os.path.join("runs", self.run_name), exist_ok=True)
         for step in range(self.save_interval, self.steps + 1, self.save_interval):
-            state = {"net": {}, "iters": step}
-            torch.save(state, os.path.join("runs", self.run_name,
-                        f"DiT_epoch_00000_step_{step:05d}.pth"))
+            torch.save({"net": {}, "iters": step},
+                       os.path.join("runs", self.run_name, f"DiT_epoch_00000_step_{step:05d}.pth"))
         torch.save({"net": {}}, os.path.join("runs", self.run_name, "ft_model.pth"))
         print(f"mock training done: {self.steps} steps, batch {self.batch_size}")
 ''')
-# a minimal torch shim that records saves and forwards to the driver's wrapper
-# (the driver imports torch first, wraps save; train.py's `import torch` gets the same module)
+
+# ---- 2) mock torch installed as 'torch' BEFORE the cell runs ----
 MOCK_TORCH = TMP / "mock_torch.py"
 MOCK_TORCH.write_text(
     '''
-import types, sys, pickle, os
+import types, sys, pickle
 mod = types.ModuleType("torch")
-_real_dir = os.environ["MOCK_TORCH_DIR"]
 def _real_save(obj, f, *a, **kw):
-    # emulate torch.save: pickle to file
-    import pickle
     with open(f, "wb") as fh:
-        pickle.dump({"mock": True, "obj": str(obj)}, fh)
+        pickle.dump({"mock": True}, fh)
 mod.save = _real_save
 sys.modules["torch"] = mod
 ''')
 
-# ---- 2) extract training code from cell 12 ----
+# ---- 3) extract the ACTUAL cell-12 source from the built notebook ----
 nb = json.loads(NB.read_text(encoding="utf-8"))
 train_cell = next("".join(c["source"]) for c in nb["cells"]
                   if c["cell_type"] == "code" and "الخلية ١٢" in "".join(c["source"]))
+check("cell 12 has no subprocess usage",
+      not re.search(r"subprocess|os\.system|os\.spawn|Popen", train_cell))
+check("cell 12 runs Trainer in-kernel", "SEED_TRAIN.Trainer(" in train_cell)
 
-# ---- 3) run cell 12 with mock environment and direct import ----
+# ---- 4) simulated kernel globals (what cells 1-11 would have left behind) ----
+ROOT = TMP / "iraqi_seedvc"
+DATA_DIR = ROOT / "data" / "iraqi_finetune"
+DATA_DIR.mkdir(parents=True)
 RUN_DIR = SEEDVC / "runs" / "iraqi_v1"
-DATA_DIR = TMP / "data"
-DATA_DIR.mkdir()
 DRV_RUN = TMP / "GDrive" / "runs" / "iraqi_v1"
+CFG = {"RUN_NAME": "iraqi_v1", "STEPS": 30, "SAVE_EVERY": 10, "TRAIN_WORKERS": 0,
+       "_BATCH": 2, "DRIVE_BACKUP": True, "DRIVE_CKPT_KEEP": 2}
+SEEDVC_CFG = SEEDVC / "configs" / "presets" / "config_dit_mel_seed_uvit_xlsr_tiny.yml"
 
-runner = f'''
-import sys, types, json
-from pathlib import Path
-sys.path.insert(0, r"{TMP}")
-import mock_torch
+# mock SEED_TRAIN = the fake train.py loaded the same way cell 6 does
+sys.path.insert(0, str(TMP))
+import mock_torch                     # installs sys.modules["torch"] first
+os.chdir(SEEDVC)                      # cell 6 sets kernel cwd to SEEDVC
+sys.path.insert(0, str(SEEDVC))
+import importlib.util as ilu
+spec = ilu.spec_from_file_location("train", TRAIN_PY)
+SEED_TRAIN = ilu.module_from_spec(spec)
+spec.loader.exec_module(SEED_TRAIN)
 
-ROOT = Path(r"{TMP}")
-SEEDVC = Path(r"{SEEDVC}")
-RUN_DIR = Path(r"{RUN_DIR}")
-DATA_DIR = Path(r"{DATA_DIR}")
-CFG = {{
-    "RUN_NAME": "iraqi_v1",
-    "_BATCH": "2",
-    "STEPS": "30",
-    "TRAIN_WORKERS": "0",
-    "SAVE_EVERY": "10",
-    "DRIVE_BACKUP": True,
-    "DRIVE_CKPT_KEEP": 2
-}}
-def drive_run_dir():
-    return Path(r"{DRV_RUN}")
+G = {
+    "__name__": "__main__", "ROOT": ROOT, "DATA_DIR": DATA_DIR, "RUN_DIR": RUN_DIR,
+    "SEEDVC": SEEDVC, "SEEDVC_CFG": SEEDVC_CFG, "CFG": CFG, "SEED_TRAIN": SEED_TRAIN,
+    "drive_run_dir": lambda: DRV_RUN,
+}
 
-{train_cell}
-'''
-RUNNER = TMP / "runner.py"
-RUNNER.write_text(runner, encoding="utf-8")
+# ---- 5) EXECUTE the real cell code in this kernel ----
+import io, contextlib
+buf = io.StringIO()
+err = None
+try:
+    with contextlib.redirect_stdout(buf):
+        exec(compile(train_cell, "<cell-12>", "exec"), G)
+except Exception as e:
+    err = f"{type(e).__name__}: {e}"
+out = buf.getvalue()
+if err:
+    print("  cell raised:", err)
+    print("  stdout tail:", out[-400:])
 
-r = subprocess.run([sys.executable, str(RUNNER)], capture_output=True, text=True,
-                   env={**os.environ, "MOCK_TORCH_DIR": str(TMP)})
-print("--- driver stdout/stderr ---")
-print(r.stdout[-1500:])
-if r.stderr:
-    print("STDERR:", r.stderr[-800:])
-print("--- exit code:", r.returncode, "---")
+check("cell 12 executed without error in-kernel", err is None)
+check("Trainer constructed in-process", "mock training done: 30 steps, batch 2" in out)
+check("drive-mirror messages printed", "[drive-mirror]" in out)
+check("start banner printed (in-kernel note)", "داخل نواة الدفتر" in out)
 
-ok = True
-def check(name, cond, detail=""):
-    global ok
-    print(f"  [{'PASS' if cond else 'FAIL'}] {name}" + (f" — {detail}" if detail else ""))
-    if not cond:
-        ok = False
-
-check("driver exited 0", r.returncode == 0)
-check("training console log written", (RUN_DIR / "train_console.log").exists())
 local_ck = sorted(RUN_DIR.glob("DiT_epoch_*_step_*.pth"))
-check("checkpoints saved locally (step 10,20,30)", len(local_ck) == 3, str([p.name for p in local_ck]))
+check("checkpoints saved locally (10/20/30)", len(local_ck) == 3, str([p.name for p in local_ck]))
 drv_ck = sorted(DRV_RUN.glob("DiT_epoch_*_step_*.pth")) if DRV_RUN.exists() else []
-check("only last 2 checkpoints mirrored to Drive", len(drv_ck) == 2,
+check("only last 2 checkpoints on fake Drive", len(drv_ck) == 2,
       str([p.name for p in drv_ck]))
 check("ft_model.pth mirrored to Drive", (DRV_RUN / "ft_model.pth").exists())
-check("log mirrored to Drive", (DRV_RUN / "train_console.log").exists())
-check("driver printed drive-mirror messages", "[drive-mirror]" in r.stdout)
-check("driver printed start banner with steps/keep", "[train] بدء الضبط الدقيق" in r.stdout)
+check("train_console.log written + mirrored",
+      (RUN_DIR / "train_console.log").exists() and (DRV_RUN / "train_console.log").exists())
+
+# torch.save restored to the original after the finally block
+import torch as torch_mod_now
+check("torch.save restored after training", torch_mod_now.save.__name__ == "_real_save")
+
+# ---- 6) verify-cell (13) code is in-kernel too ----
+verify_cell = next("".join(c["source"]) for c in nb["cells"]
+                   if c["cell_type"] == "code" and "الخلية ١٣" in "".join(c["source"]))
+check("cell 13 has no subprocess usage",
+      not re.search(r"subprocess|os\.system|Popen", verify_cell))
+check("cell 13 calls SEED_INFER.main in-kernel", "SEED_INFER.main(vc_args)" in verify_cell)
+
+# ---- 7) prefetch/export/HF cells are direct calls ----
+for no, tok in (("١٠", "PIPELINE.cmd_prefetch("), ("١٤", "PIPELINE.cmd_export(")):
+    cell = next("".join(c["source"]) for c in nb["cells"]
+                if c["cell_type"] == "code" and f"الخلية {no}" in "".join(c["source"]))
+    check(f"cell {no} is a direct in-kernel call", tok in cell,
+          "subprocess-free: " + str(not re.search(r"subprocess|Popen", cell)))
+
+hf_cell = next("".join(c["source"]) for c in nb["cells"]
+               if c["cell_type"] == "code" and "الخلية ١٦" in "".join(c["source"]))
+check("cell 16 uploads via HfApi in-kernel",
+      "from huggingface_hub import HfApi" in hf_cell and "api.upload_folder(" in hf_cell
+      and not re.search(r"subprocess|Popen", hf_cell))
+
+# ---- 8) cells 4/5 are the ONLY cells allowed to mention subprocess ----
+code_cells = ["".join(c["source"]) for c in nb["cells"] if c["cell_type"] == "code"]
+offenders = []
+for src in code_cells:
+    if "الخلية ٤" in src or "الخلية ٥" in src:
+        continue
+    if re.search(r"subprocess|Popen|os\.system", src):
+        offenders.append(src.splitlines()[2][:60])
+check("no subprocess outside cells 4/5", not offenders, str(offenders))
 
 print("\n" + "=" * 60)
-print("TRAIN DRIVER E2E:", "PASSED" if ok else "FAILED")
-sys.exit(0 if ok else 1)
+print("IN-KERNEL TRAINING TEST:", "PASSED" if not fails else f"FAILED {fails}")
+sys.exit(0 if not fails else 1)

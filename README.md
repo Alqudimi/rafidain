@@ -232,7 +232,7 @@ rafidain/                        # جذر المستودع (github.com/Alqudimi/
 ├── docker/                       # Dockerfile (base/full) + docker-compose
 ├── .github/workflows/ci.yml      # lint + tests + smoke
 ├── rafidain_runpod_training.ipynb  # دفتر RunPod الشامل للتدريب (v2.1 — بيانات موسّعة)
-├── rafidain_colab_training.ipynb   # دفتر Google Colab للتدريب (v2 — تدريب في المقدمة + أرشيف بيانات جاهز، بلا عمليات خلفية)
+├── rafidain_colab_training.ipynb   # دفتر Google Colab للتدريب (v3 — تدريب داخل النواة بالاستيراد المباشر + أرشيف بيانات جاهز، بلا عمليات خلفية وبلا subprocess)
 ├── DATA_SOURCES.md               # مصادر بيانات اللهجة العراقية المُدقّقة (≈390 ساعة) + منهجية الفحص
 ├── seed_vc_iraqi_colab.sh        # تنزيل بيانات اللهجة العراقية + التدريب (Colab)
 ├── seed_vc_iraqi_ubuntu.sh       # تنزيل بيانات اللهجة العراقية + التدريب (Ubuntu)

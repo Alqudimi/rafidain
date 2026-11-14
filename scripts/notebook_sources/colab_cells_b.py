@@ -260,20 +260,22 @@ stats = {"total_files": tot_n, "total_hours": round(tot_h, 3),
 (DATA_DIR / "_stats.json").write_text(json.dumps(stats, indent=2, ensure_ascii=False), encoding="utf-8")
 print(f"\n[جاهز] {tot_h:.1f} ساعة عراقية جاهزة للتدريب — تابع إلى خلية نقاط النموذج (10).")'''))
 
-# ============================================================ CODE 10 — prefetch checkpoints
+# ============================================================ CODE 10 — prefetch checkpoints (direct call)
 CELLS_B.append(("code", r'''# ============================================================ #
 #  الخلية ١٠ — تنزيل نقاط النموذج الأساسية مسبقاً (≈2.2GB)     #
 #  DiT_uvit_tat_xlsr_ema + XLSR-300m + HiFT + CAMPPlus +       #
 #  OpenVoice — كلها في مجلد checkpoints داخل seed-vc           #
 #  (يمنع تعطل بدء التدريب لاحقاً بسبب التنزيل، وقابل للاستئناف)#
-#  عبر استدعاء PIPELINE.cmd_prefetch مباشرة — بلا subprocess   #
+#  استدعاء مباشر لدالة cmd_prefetch من وحدة خط البيانات        #
+#  المستوردة في الخلية 6 — داخل نواة الدفتر، بلا أي عملية خارجية #
 # ============================================================ #
 import types
 from pathlib import Path
 
-# استدعاء cmd_prefetch من وحدة خط البيانات المستوردة مباشرة في النواة
-print("[prefetch] تنزيل نقاط النموذج الأساسية عبر PIPELINE.cmd_prefetch مباشرة ...")
-PIPELINE.cmd_prefetch(types.SimpleNamespace(repo=str(SEEDVC)))
+# cmd_prefetch يقرأ huggingface_hub من النواة (مثبتة في الخلية 5)
+# cwd هو seed-vc منذ الخلية 6 — مجلد checkpoints النسبي يصح تلقائياً
+rc = PIPELINE.cmd_prefetch(types.SimpleNamespace(repo=str(SEEDVC)))
+assert not rc, "فشل prefetch — راجع السجل أعلاه"
 
 ck = SEEDVC / "checkpoints"
 total = sum(f.stat().st_size for f in ck.rglob("*") if f.is_file()) / 1e9 if ck.exists() else 0

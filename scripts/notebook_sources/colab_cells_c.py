@@ -16,23 +16,25 @@ CELLS_C = []
 # ============================================================ MD 5 — training explanation
 CELLS_C.append(("markdown", r'''<div dir="rtl">
 
-## مرحلة التدريب — في مقدمة الخلية، بلا عمليات خلفية
+## مرحلة التدريب — داخل نواة الدفتر، بلا عمليات خلفية وبلا subprocess
 
 - **نقطة البداية دائماً** الأوزان المنشورة `DiT_uvit_tat_xlsr_ema.pth` من `Plachta/Seed-VC`
   (لا تدريب من الصفر أبداً). إن وُجدت نقطة سابقة في مجلد التشغيل يُستأنف منها تلقائياً
   (سلوك المدرب الرسمي: يبحث عن أحدث `DiT_epoch_*_step_*.pth` ويكمل منها، ويُبقي آخر
   نقطتين فقط).
-- **كيف يعمل هنا؟** نستورد وحدة `train.py` من مستودع Seed-VC المستنسخ وننشئ `Trainer`
-  مباشرة ثم نستدعي `.train()` — التدريب يعمل **داخل خلية النوت بوك نفسها** (في البيئة
-  المعزولة)، فترى شريط تقدم tqdm وأسطر `epoch E, step S, loss: L` تظهر مباشرة أمامك.
-  هذا هو النمط الذي تسمحه سياسة Colab المجانية: استخدام تفاعلي حقيقي للنواة.
-- **لماذا لا عملية خلفية؟** النسخة الأولى كانت تطلق التدريب كعملية مستقلة تعيش بعد
-  انتهاء الخلية، مع مراقب نسخ دائم وحلقة انتظار لساعات — وهذا يُصنَّف «استخداماً
-  غير مسموح» في الطبقة المجانية فتُقطع الجلسة فجأة (Runtime disconnected).
-  هنا لا يوجد أي من ذلك.
+- **كيف يعمل هنا؟** `import train` من مستودع Seed-VC المستنسخ (تمت في الخلية 6)، ثم
+  ننشئ `Trainer` ونستدعي `.train()` **داخل نواة الدفتر نفسها** — لا بيئة منفصلة ولا عملية
+  ابن ولا سطر أوامر إطلاقاً. ترى شريط تقدم tqdm وأسطر `epoch E, step S, loss: L`
+  تظهر مباشرة أمامك. هذا هو النمط الذي تسمحه سياسة Colab المجانية: استخدام تفاعلي
+  حقيقي للنواة.
+- **لماذا لا عملية خلفية ولا subprocess؟** النسخة الأولى كانت تطلق التدريب كعملية
+  مستقلة تعيش بعد انتهاء الخلية، مع مراقب نسخ دائم وحلقة انتظار لساعات — وهذا
+  يُصنَّف «استخداماً غير مسموح» في الطبقة المجانية فتُقطع الجلسة فجأة
+  (Runtime disconnected). النسخة الثانية أزالت الخلفية لكن أبقت تشغيل بايثون بعملية
+  ابن؛ هذه النسخة تشغّل المدرب نفسه داخل النواة — صفر عمليات خارجية لمنطق المشروع.
 - **النسخ إلى Drive رغم ذلك — كيف؟** نغلّف `torch.save` (التي يستدعيها المدرب عند
-  كل نقطة حفظ) بغلاف ينسخ النقطة الجديدة إلى Drive **فور حفظها من داخل عملية
-  التدريب نفسها** — بلا مراقب ولا خيط خلفي. أقصى خسارة عند أي انقطاع = الخطوات منذ
+  كل نقطة حفظ) بغلاف ينسخ النقطة الجديدة إلى Drive **فور حفظها من داخل النواة
+  نفسها** — بلا مراقب ولا خيط خلفي. أقصى خسارة عند أي انقطاع = الخطوات منذ
   آخر `SAVE_EVERY` (250 افتراضياً ≈ دقائق معدودة على T4).
 - **مخرجات التدريب**: سطر خسارة كل 10 خطوات، نقطة كل 250 خطوة (تُنسخ فوراً)، وفي
   النهاية `ft_model.pth` (أوزان DiT المضبوطة — كل ما يلزم للنشر والاستدلال) ثم تُنسخ
@@ -41,8 +43,8 @@ CELLS_C.append(("markdown", r'''<div dir="rtl">
   و4 لـ 24GB (L4)؛ 200–500 خطوة لمتحدث واحد؛ **1500–4000 خطوة لتكيّف عام مع اللهجة**
   (3000 افتراضياً هنا)؛ معدل التعلم مثبّت في الإعداد الرسمي (1e-5) — لا ترفعه لنموذج
   25M باراميتر.
-- **انقطعت الجلسة؟** افتح الدفتر ← **Run all**: تُبنى البيئة، والأرشيف الجاهز يُفك من
-  نسخة Drive إن وُجدت، والخلية 11 تستعيد أحدث نقطة من Drive، ويستأنف التدريب من
+- **انقطعت الجلسة؟** افتح الدفتر ← **Run all**: تُثبَّت الحزم في النواة، والأرشيف
+  الجاهز يُفك من نسخة Drive إن وُجدت، والخلية 11 تستعيد أحدث نقطة من Drive، ويستأنف التدريب من
   عندها تلقائياً.
 
 مدة تقديرية: 3000 خطوة على **T4 في حدود 2–4 ساعات تقريباً** (حسب أطوال المقاطع)، وعلى
@@ -90,15 +92,15 @@ else:
     print("[استعادة] لا نسخة Drive (غير موصول أو لا سجل سابق) — تشغيل جديد كلياً.")
     print("          (التدريب يبدأ من الأوزان المنشورة DiT_uvit_tat_xlsr_ema.pth — هذا طبيعي)")'''))
 
-# ============================================================ CODE 12 — foreground training
+# ============================================================ CODE 12 — in-kernel training
 CELLS_C.append(("code", r'''# ============================================================ #
-#  الخلية ١٢ — التدريب: في مقدمة هذه الخلية مباشرة             #
-#  استيراد train.py من seed-vc وإنشاء Trainer وتشغيله —        #
-#  استدعاء مباشر عبر import بلا subprocess وبلا train_driver.py#
-#  كل نقطة حفظ تُنسخ فوراً إلى Drive من داخل عملية التدريب     #
-#  (غلاف torch.save) — والسجل الكامل يُحفظ في train_console.log#
+#  الخلية ١٢ — التدريب: داخل نواة الدفتر نفسها                 #
+#  SEED_TRAIN.Trainer (المستورد في الخلية 6) يُنشأ ويُشغَّل      #
+#  هنا مباشرة — بلا عملية ابن ولا سطر أوامر إطلاقاً         #
+#  كل نقطة حفظ تُنسخ فوراً إلى Drive من داخل النواة (غلاف      #
+#  torch.save) — والسجل الكامل يُحفظ في train_console.log     #
 # ============================================================ #
-import os, sys, time, json, shutil, io, contextlib
+import os, sys, time, json, glob, re, shutil, contextlib, io
 from pathlib import Path
 import torch
 
@@ -108,38 +110,19 @@ if FT.exists():
     print(f"النموذج النهائي موجود أصلاً: {FT}")
     print("لتدريب جديد كلياً: غيّر RUN_NAME في الخلية 2 (أو احذف ft_model.pth ثم أعد هذه الخلية).")
 else:
-    BATCH      = int(CFG["_BATCH"] or 2)
-    MAXS       = int(CFG["STEPS"])
-    WORKERS    = int(CFG["TRAIN_WORKERS"])
-    DRV_RUN    = drive_run_dir() if CFG.get("DRIVE_BACKUP", True) else None
-    KEEP       = int(CFG.get("DRIVE_CKPT_KEEP", 2))
+    BATCH    = int(CFG["_BATCH"] or 2)
+    MAXS     = int(CFG["STEPS"])
+    WORKERS  = int(CFG["TRAIN_WORKERS"])
     SAVE_EVERY = int(CFG["SAVE_EVERY"])
+    DRV_RUN  = drive_run_dir() if CFG.get("DRIVE_BACKUP", True) else None
+    KEEP     = int(CFG.get("DRIVE_CKPT_KEEP", 2))
 
-    # التأكد من إدراج مسارات seed-vc في sys.path للاستيراد المباشر
-    for sp in (SEEDVC, SEEDVC / "modules"):
-        if str(sp) not in sys.path:
-            sys.path.insert(0, str(sp))
-
-    # استيراد وحدة المدرب الرسمية مباشرة
-    import train as seed_train
-
-    _log_path = RUN_DIR / "train_console.log"
     RUN_DIR.mkdir(parents=True, exist_ok=True)
-
-    class Tee(io.TextIOBase):
-        """stdout مزدوج: يطبع مباشرة في الخلية ويحفظ في train_console.log."""
-        def __init__(self, original, path):
-            self.original = original
-            self.file = open(path, "a", encoding="utf-8", buffering=1)
-        def write(self, s):
-            self.original.write(s)
-            self.file.write(s)
-            return len(s)
-        def flush(self):
-            self.original.flush()
-            self.file.flush()
+    _log_path = RUN_DIR / "train_console.log"
 
     # ---- مرآة Drive اللحظية: غلاف حول torch.save ينسخ النقاط فور حفظها ----
+    # (يُركَّب قبل إنشاء Trainer حتى تغطي كل عمليات الحفظ؛ النسخ متزامن داخل
+    #  عملية التدريب نفسها — بلا خيط خلفي ولا عملية إضافية)
     _real_save = torch.save
     def _save_with_drive_mirror(obj, f, *a, **kw):
         _real_save(obj, f, *a, **kw)
@@ -154,9 +137,8 @@ else:
                     shutil.copy2(p, tmp)
                     os.replace(tmp, dst)
                     # تشذيب النقاط القديمة على Drive (أبقِ آخر KEEP)
-                    import glob as _g, re as _re
-                    cks = sorted(_g.glob(os.path.join(DRV_RUN, "DiT_epoch_*_step_*.pth")),
-                                 key=lambda x: int(_re.search(r"step_([0-9]+)", x).group(1)))
+                    cks = sorted(glob.glob(os.path.join(DRV_RUN, "DiT_epoch_*_step_*.pth")),
+                                 key=lambda x: int(re.search("step_([0-9]+)", x).group(1)))
                     for old in (cks[:-KEEP] if KEEP > 0 else []):
                         try: os.remove(old)
                         except OSError: pass
@@ -167,25 +149,36 @@ else:
                 try:
                     os.makedirs(DRV_RUN, exist_ok=True)
                     shutil.copy2(p, os.path.join(DRV_RUN, base))
-                    shutil.copy2(str(_log_path), os.path.join(DRV_RUN, "train_console.log"))
+                    shutil.copy2(_log_path, os.path.join(DRV_RUN, "train_console.log"))
                     print("[drive-mirror] ft_model.pth + السجل -> Drive (اكتمل التدريب)", flush=True)
                 except Exception as e:
                     print(f"[drive-mirror] فشل نسخ النموذج النهائي: {e}", flush=True)
-
     torch.save = _save_with_drive_mirror
 
-    t0 = time.time()
-    print(f"[train] بدء الضبط الدقيق باستدعاء seed_train.Trainer مباشرة: {MAXS} خطوة، دفعة {BATCH}، حفظ كل {SAVE_EVERY}", flush=True)
+    # ---- سجل مزدوج: الشاشة (خلية الدفتر) + train_console.log ----
+    class _Tee(io.TextIOBase):
+        def __init__(self, original, path):
+            self.original = original
+            self.file = open(path, "a", encoding="utf-8", buffering=1)
+        def write(self, s):
+            self.original.write(s)
+            self.file.write(s)
+            return len(s)
+        def flush(self):
+            self.original.flush()
+            self.file.flush()
+
+    print(f"[train] بدء الضبط الدقيق: {MAXS} خطوة، دفعة {BATCH}، حفظ كل {SAVE_EVERY}", flush=True)
+    print(f"[train] التشغيل داخل نواة الدفتر مباشرة (import train.Trainer) — بلا أي عملية ابن", flush=True)
     if DRV_RUN:
         print(f"[train] مرآة Drive مفعّلة: كل نقطة تُنسخ فور حفظها إلى {DRV_RUN} (أبقِ آخر {KEEP})", flush=True)
 
-    _old_cwd = os.getcwd()
-    os.chdir(str(SEEDVC))  # train.py يفتح configs/hifigan.yml و checkpoints نسبياً
+    t0 = time.time()
     try:
-        with contextlib.redirect_stdout(Tee(sys.stdout, str(_log_path))):
-            trainer = seed_train.Trainer(
-                config_path=os.path.join(str(SEEDVC), "configs", "presets", "config_dit_mel_seed_uvit_xlsr_tiny.yml"),
-                pretrained_ckpt_path=None,      # يجد آخر نقطة محلية تلقائياً أو ينزّل الأساسية المنشورة
+        with contextlib.redirect_stdout(_Tee(sys.stdout, _log_path)):
+            trainer = SEED_TRAIN.Trainer(
+                config_path=str(SEEDVC_CFG),       # إعداد seed-vc الرسمي (cwd = seed-vc منذ الخلية 6)
+                pretrained_ckpt_path=None,         # يجد آخر نقطة محلية تلقائياً أو ينزّل الأساسية المنشورة
                 data_dir=str(DATA_DIR),
                 run_name=CFG["RUN_NAME"],
                 batch_size=BATCH,
@@ -197,8 +190,7 @@ else:
             )
             trainer.train()
     finally:
-        os.chdir(_old_cwd)
-        torch.save = _real_save
+        torch.save = _real_save    # أعِد torch.save الأصلي مهما حدث
 
     mins = (time.time() - t0) / 60
     if FT.exists():
@@ -215,7 +207,6 @@ else:
             "أعد هذه الخلية — إن كانت هناك نقطة محفوظة سيُستأنف التدريب منها تلقائياً.")
 
 # منحنى الخسارة من السجل (إن وُجدت نقاط كافية)
-import re
 STEP_RE = re.compile(r"epoch ([0-9]+), step ([0-9]+), loss: ([0-9.eE+-]+)")
 logp = RUN_DIR / "train_console.log"
 pts = []
@@ -243,8 +234,7 @@ if len(pts) >= 2:
     drv = drive_run_dir()
     if drv:
         try:
-            import shutil as _sh
-            _sh.copy2(chart, drv / chart.name)
+            shutil.copy2(chart, drv / chart.name)
         except Exception:
             pass
 
@@ -272,15 +262,16 @@ exports/iraqi_v1/                          (محلي + MyDrive/rafidain_seedvc/e
 
 </div>'''))
 
-# ============================================================ CODE 13 — verify
+# ============================================================ CODE 13 — verify (in-kernel)
 CELLS_C.append(("code", r'''# ============================================================ #
 #  الخلية ١٣ — التحقق: استدلال حقيقي بالنقطة المضبوطة          #
 #  (مصدر من أمثلة Seed-VC + مرجع عراقي من بياناتك -> تشغيل)    #
-#  عبر استيراد inference.py من seed-vc مباشرة — بلا subprocess  #
+#  استدعاء مباشر لـ SEED_INFER.main (المستوردة في الخلية 6)    #
+#  داخل نواة الدفتر — بلا عملية خارجية وبلا سطر أوامر      #
 # ============================================================ #
 from IPython.display import Audio, display
 from pathlib import Path
-import sys, types, os
+import types
 
 FT = RUN_DIR / "ft_model.pth"
 assert FT.exists(), "لا يوجد ft_model.pth — شغّل خلية التدريب (12) حتى الاكتمال"
@@ -303,34 +294,26 @@ outdir.mkdir(parents=True, exist_ok=True)
 
 print(f"المصدر (إنجليزي): {src.name}")
 print(f"المرجع (عراقي)  : {ref.relative_to(DATA_DIR)}")
-print("تشغيل الاستدلال عبر استيراد inference.py مباشرة ... (1-3 دقائق)")
+print("تشغيل الاستدلال داخل النواة ... (1-3 دقائق)")
 
-# استيراد inference.py كوحدة واستدعاء main() مباشرة في النواة
-for sp in (SEEDVC, SEEDVC / "modules"):
-    if str(sp) not in sys.path:
-        sys.path.insert(0, str(sp))
-
-_old_cwd = os.getcwd()
-os.chdir(str(SEEDVC))
+# الأرجس نفسها التي يمررها سطر الأمد لـ inference.py — لكن بلا سطر أوامر:
+# نستدعي main() مباشرة على كائن args (SEED_INFER مستوردة من الخلية 6)
+vc_args = types.SimpleNamespace(
+    source=str(src),
+    target=str(ref),
+    output=str(outdir),
+    diffusion_steps=16, length_adjust=1.0, inference_cfg_rate=0.7,
+    f0_condition=False, auto_f0_adjust=False, semi_tone_shift=0,
+    checkpoint=str(FT),
+    config=str(SEEDVC_CFG),
+    fp16=True,
+)
 try:
-    import inference as inf
-    a = types.SimpleNamespace(
-        source=str(src),
-        target=str(ref),
-        output=str(outdir),
-        diffusion_steps=16,
-        length_adjust=1.0,
-        inference_cfg_rate=0.7,
-        f0_condition=False,
-        auto_f0_adjust=False,
-        semi_tone_shift=0,
-        checkpoint=str(FT),
-        config=str(SEEDVC_CFG),
-        fp16=True,
-    )
-    inf.main(a)
-finally:
-    os.chdir(_old_cwd)
+    SEED_INFER.main(vc_args)     # الاستدلال كاملاً داخل نواة الدفتر
+    verify_ok = True
+except Exception as e:
+    print(f"[تحقق] فشل الاستدلال: {e}")
+    verify_ok = False
 
 outs = sorted(outdir.glob("vc_*.wav"))
 if outs:
@@ -343,21 +326,21 @@ if outs:
 else:
     print("لم يُنتج ملف صوتي — راجع السجل أعلاه. (غير قاتل: الأوزان ستصدَّر في الخلية 14 على أي حال)")'''))
 
-# ============================================================ CODE 14 — export
+# ============================================================ CODE 14 — export (direct call)
 CELLS_C.append(("code", r'''# ============================================================ #
 #  الخلية ١٤ — تصدير الحزمة النهائية                           #
 #  أوزان + إعداد + تقرير + سجلات — محلياً ثم نسخها إلى Drive   #
-#  عبر استدعاء PIPELINE.cmd_export مباشرة — بلا subprocess    #
+#  استدعاء مباشر لـ PIPELINE.cmd_export داخل نواة الدفتر       #
+#  (نفس الواجهة، بلا عملية خارجية وبلا سطر أوامر)            #
 # ============================================================ #
-import shutil, json, types
+import shutil, types, json
 from pathlib import Path
 
 FT = RUN_DIR / "ft_model.pth"
 assert FT.exists(), "لا يوجد ft_model.pth — أكمل التدريب أولاً (الخلية 12)"
 EXPORT_DIR = EXPORTS / CFG["RUN_NAME"]
 
-# استدعاء cmd_export مباشرة من كائن PIPELINE المستورد في الخلية 6
-print(f"تصدير الحزمة عبر PIPELINE.cmd_export مباشرة ...")
+# استدعاء cmd_export من وحدة خط البيانات المستوردة (الخلية 6) — داخل النواة
 PIPELINE.cmd_export(types.SimpleNamespace(
     run_dir=str(RUN_DIR),
     config=str(SEEDVC_CFG),
@@ -462,21 +445,20 @@ if not CFG["HF_TOKEN"]:
     print("  4) أعد تشغيل هذه الخلية — سترفع الحزمة كاملة إلى مستودع خاص في حسابك")
 else:
     assert (EXPORT_DIR / "seed_uvit_tat_xlsr_tiny_iraqi.pth").exists(), "شغّل خلية التصدير (14) أولاً"
-    # الرفع عبر مكتبة huggingface_hub مباشرة في النواة
+    # الرفع مباشرة داخل النواة — huggingface_hub مثبتة في الخلية 5 (بلا عملية خارجية)
     import time
     from huggingface_hub import HfApi
-    token = str(CFG["HF_TOKEN"])
-    api = HfApi(token=token)
+    api = HfApi(token=str(CFG["HF_TOKEN"]))
     user = api.whoami()["name"]
     repo_id = str(CFG.get("HF_REPO_ID", "")).strip() or f"{user}/rafidain-seedvc-iraqi"
     private = bool(CFG["HF_PRIVATE"])
     api.create_repo(repo_id, private=private, exist_ok=True)
-    print(f"[hf] upload {EXPORT_DIR} -> {repo_id} (private = {private})")
+    print(f"[hf] رفع {EXPORT_DIR} -> {repo_id} (خاص = {private}) ...")
     api.upload_folder(
         folder_path=str(EXPORT_DIR),
         repo_id=repo_id,
         repo_type="model",
-        commit_message=f"Rafidain Iraqi fine-tune ({time.strftime('%Y-%m-%d %H:%M')})"
+        commit_message=f"Rafidain Iraqi fine-tune ({time.strftime('%Y-%m-%d %H:%M')})",
     )
     print(f"[hf] REPO_URL: https://huggingface.co/{repo_id}")
     print(R"""
@@ -500,35 +482,32 @@ CELLS_C.append(("code", r'''# ==================================================
 import shutil
 from pathlib import Path
 
-UV = globals().get("UV") or shutil.which("uv")
-
 def dir_gb(p: Path) -> float:
     if not p.exists():
         return 0.0
     return sum(f.stat().st_size for f in p.rglob("*") if f.is_file()) / 1e9
 
-targets = [DATA_DIR, ROOT / "raw", ROOT / "venv", SEEDVC / "checkpoints" / "hf_cache"]
-labels = ["بيانات التدريب الجاهزة (الأرشيف)", "مصادر خام إضافية", "البيئة المعزولة (تُعاد في 3-8 دقائق)", "مخبأ تنزيل HF"]
+targets = [DATA_DIR, ROOT / "raw", SEEDVC / "checkpoints" / "hf_cache"]
+labels = ["بيانات التدريب الجاهزة (الأرشيف)", "مصادر خام إضافية", "مخبأ تنزيل HF"]
 print(f"المساحة الحرة الآن: {shutil.disk_usage(ROOT).free/1e9:.1f} GB")
 for t, lb in zip(targets, labels):
     s = dir_gb(t)
     print(f"  {t.name:<14} {s:6.2f} GB   ({lb})")
 
 if CFG["CLEAN_AFTER"]:
-    for t in targets[:3]:   # البيانات والخام والبيئة — أما نقاط HF فتحذف فقط لو الطلب صريح
+    for t in targets[:2]:   # البيانات والخام — أما مخبأ HF فيُحذف فقط لو الطلب صريح
         if t.exists():
             shutil.rmtree(t)
             print(f"  حُذف: {t}")
     if (ROOT / ".ready_archive_ok").exists():
         (ROOT / ".ready_archive_ok").unlink()
-    if UV:
-        sh([UV, "cache", "clean"], check=False)
-    else:
-        sh([str(VENV_PY), "-m", "pip", "cache", "purge"], check=False)
+    import sys as _sys
+    sh([_sys.executable, "-m", "pip", "cache", "purge"], check=False)
     print(f"المساحة الحرة بعد التنظيف: {shutil.disk_usage(ROOT).free/1e9:.1f} GB")
     print("كل ما يهم محفوظ على Drive (النقاط + الحزمة + الأرشيف) — لا خسارة دائمة.")
 else:
-    print('\\nللتفعيل: اجعل  CFG["CLEAN_AFTER"] = True  في الخلية 2 ثم أعد تشغيل هذه الخلية.')'''))
+    print(R"""
+للتفعيل: اجعل  CFG["CLEAN_AFTER"] = True  في الخلية 2 ثم أعد تشغيل هذه الخلية.""")'''))
 
 # ============================================================ CODE 18 — deployment
 CELLS_C.append(("code", r'''# ============================================================ #
@@ -549,20 +528,19 @@ else:
  نشر النموذج المضبوط — ثلاثة مسارات جاهزة
 ==========================================================
 
-(أ) استدلال فوري في هذه الجلسة (البيئة جاهزة الآن):
-    في خلية جديدة (نفس أسلوب خلية التحقق 13):
-      import sys, types, os
-      for sp in (r"{SEEDVC}", os.path.join(r"{SEEDVC}", "modules")):
-          if sp not in sys.path:
-              sys.path.insert(0, sp)
-      os.chdir(r"{SEEDVC}")
-      import inference as inf
-      a = types.SimpleNamespace(source=r"<صوت-المتكلم-الأصلي.wav>",
-                               target=r"<صوت-مرجعي-عراقي.wav>", output=r"./out",
-                               diffusion_steps=30, length_adjust=1.0, inference_cfg_rate=0.7,
-                               f0_condition=False, auto_f0_adjust=False, semi_tone_shift=0,
-                               checkpoint=r"{W}", config=r"{C}", fp16=True)
-      inf.main(a)
+(أ) استدلال فوري في هذه الجلسة — استيراد مباشر داخل النواة
+    (الوحدات محمّلة أصلاً منذ الخلية 6 — بلا أي عملية خارجية):
+    في خلية جديدة الصق:
+
+      import types
+      vc = types.SimpleNamespace(
+          source=r"<صوت-المتكلم-الأصلي.wav>",
+          target=r"<صوت-مرجعي-عراقي.wav>",   # مقطع عراقي من بياناتك
+          output=r"./out",
+          diffusion_steps=30, length_adjust=1.0, inference_cfg_rate=0.7,
+          f0_condition=False, auto_f0_adjust=False, semi_tone_shift=0,
+          checkpoint=r"{W}", config=r"{C}", fp16=True)
+      SEED_INFER.main(vc)     # الاستدلال داخل النواة مباشرة
 
 (ب) خدمة رافِدَين الكاملة على نفس جلسة Colab — REST + WebSocket + واجهة ويب
     بنفق عام مجاني (trycloudflare) للاستنساخ اللحظي من أي مكان.
@@ -574,7 +552,8 @@ else:
       os.environ["RAFIDAIN__ENGINE__LOCAL_CONFIG"]     = r"{C}"
       os.environ["RAFIDAIN__ENGINE__DEVICE"]           = "cuda"
       os.environ["RAFIDAIN__API_KEYS"]                 = r'["<مفتاح-API-عشوائي-خاص-بك>"]'
-      get_ipython().system("bash {RAFIDAIN}/scripts/install/setup_colab.sh")
+      # تشغيل سكربت تثبيت خدمة رافِدَين الرسمي (أمر نظام لتشغيل الخدمة):
+      !bash {RAFIDAIN}/scripts/install/setup_colab.sh
 
     بعد دقائق يطبع رابطاً عاماً مؤقتاً:
       لوحة التحكم:  <الرابط>/web   |   البث الحي:  <الرابط>/live   |   API:  <الرابط>/docs
@@ -599,7 +578,7 @@ CELLS_C.append(("markdown", r'''<div dir="rtl">
 
 | المشكلة | السبب | الحل |
 |---|---|---|
-| `Runtime disconnected` قديماً | النسخة الأولى كانت تشغّل التدريب كعملية خلفية + مراقب دائم + حلقة انتظار — أنماط «استخدام غير مسموح» في الطبقة المجانية | **أُزيلت كلها في هذه النسخة**: التدريب في مقدمة الخلية 12 — لا عمليات خفية إطلاقاً |
+| `Runtime disconnected` قديماً | النسخة الأولى كانت تشغّل التدريب كعملية خلفية + مراقب دائم + حلقة انتظار — أنماط «استخدام غير مسموح» في الطبقة المجانية | **أُزيلت كلها في هذه النسخة**: التدريب داخل نواة الخلية 12 مباشرة — لا عمليات خفية ولا عملية ابن إطلاقاً |
 | انقطعت الجلسة أثناء التدريب | حد طبيعي لجلسات Colab | `Run all` — البيئة تُبنى، الأرشيف يُفك من Drive، والخلية 11 تستعيد آخر نقطة، والتدريب يكمل تلقائياً |
 | انقطع تنزيل الأرشيف في المنتصف | شبكة | أعد الخلية 7 — `curl -C -` يستكمل من حيث توقف (تحقق الحجم الدقيق بالبايت قبل أي فك) |
 | نفدت مساحة القرص | ت accumulation البيانات | خلية التنظيف (17) — أو قلّل مساحة بنسخ أرشيف Drive فقط عند الحاجة |
@@ -608,7 +587,7 @@ CELLS_C.append(("markdown", r'''<div dir="rtl">
 | التدريب بطيء جداً | T4 + مقاطع طويلة | طبيعي على الطبقة المجانية؛ أو قلّل `STEPS`؛ L4 يضاعف السرعة |
 | فشل `verify` | مقطع مرجعي شاذ | غير قاتل — الأوزان تُصدَّر على أي حال (الخلية 14) |
 
-**بعد أي انقطاع**: افتح الدفتر ← `Run all` ← كل شيء يستأنف: البيئة (3-8 دقائق)،
+**بعد أي انقطاع**: افتح الدفتر ← `Run all` ← كل شيء يستأنف: الحزم (دقائق)،
 البيانات (من Drive: دقائق / من الإنترنت: حتى 20 دقيقة)، النقاط (ثوانٍ)، والتدريب
 يكمل من آخر خطوة محفوظة. لا يوجد سيناريو يبدأ فيه الدفتر من الصفر إلا مرة واحدة.
 
@@ -620,7 +599,7 @@ CELLS_C.append(("markdown", r'''<div dir="rtl">
 ## الخلاصة — ماذا حصلت عليه؟
 
 1. **نموذج مضبوط** `seed_uvit_tat_xlsr_tiny_iraqi.pth` — Seed-VC tiny (25M باراميتر)
-   تكيّف على الساعات العراقية الجاهزة، عبر تدريب في مقدمة الخلية بلا أي عمليات خلفية.
+   تكيّف على الساعات العراقية الجاهزة، عبر تدريب داخل نواة الدفتر مباشرة (import train ← Trainer) بلا أي عملية خلفية أو عملية ابن.
 2. **ثلاث نسخ دائمة**: Drive (نقاط + حزمة + أرشيف)، tar.gz واحد قابل للتنزيل،
    وHuggingFace Hub (اختياري لكنه الأضمن).
 3. **قابلية استئناف كاملة**: كل خلية تتخطى ما أنجز، والأرشيف الجاهز جعل مرحلة

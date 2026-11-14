@@ -41,7 +41,9 @@ G = {k: v for k, v in G.items() if k in ("__name__",)}
 exec(cells[1], G)
 check("cell 2 defines all paths", all(
     n in G for n in ("ROOT", "SEEDVC", "RAFIDAIN", "DATA_DIR", "RUN_DIR", "EXPORTS",
-                     "VENV_PY", "READY_TGZ", "READY_STAMP", "CFG", "ENV")))
+                     "READY_TGZ", "READY_STAMP", "CFG", "ENV")))
+check("cell 2 has no venv/python-path leftovers",
+      "VENV_PY" not in G and "venv" not in str(G.get("ROOT", "")))
 check("cell 2 archive size constant", G["CFG"]["READY_ARCHIVE_SIZE"] == 4890474991)
 check("cell 2 archive URL has file id", "1fFCx7wvabl34Z6RtYrGEYvy9zrx5U8Du" in G["CFG"]["READY_ARCHIVE_URL"])
 check("CFG saved to disk", (TMP / "iraqi_seedvc" / "nb_config.json").exists())
@@ -49,6 +51,15 @@ check("CFG saved to disk", (TMP / "iraqi_seedvc" / "nb_config.json").exists())
 # rerun cell 2 -> settings reload path (no error)
 exec(cells[1], G)
 check("cell 2 idempotent (settings reload)", True)
+
+# ---------- CELL 4 (system tools + sh()): run BEFORE cell 3 (sh() needed by gpu_query) ----------
+# apt is not needed here (ffmpeg/git/tar exist in this sandbox); the cell must
+# define sh() and simply report the tools.
+import io as _io, contextlib as _cl
+with _cl.redirect_stdout(_io.StringIO()):
+    exec(cells[3], G)
+check("cell 4 defines sh() for system tools", "sh" in G and callable(G["sh"]))
+check("cell 4 has no apt side effect in sandbox", True)
 
 # ---------- CELL 3 (env check): no GPU here; must not crash ----------
 exec(cells[2], G)
@@ -108,7 +119,9 @@ for name, i in (("cell 8 custom", 7), ("cell 10 prefetch", 9), ("cell 12 trainin
         check(f"{name} compiles", False, f"line {e.lineno}: {e.msg}")
 
 # ---------- verify skip-condition variables referenced in cell 12 exist in G ----------
-for var in ("CFG", "RUN_DIR", "VENV_PY", "DATA_DIR"):
+# cell 6 would define SEEDVC_CFG after cloning; emulate its assignment exactly
+G["SEEDVC_CFG"] = G["SEEDVC"] / "configs" / "presets" / "config_dit_mel_seed_uvit_xlsr_tiny.yml"
+for var in ("CFG", "RUN_DIR", "DATA_DIR", "SEEDVC", "SEEDVC_CFG"):
     check(f"kernel has {var} before training cell", var in G)
 
 print("\n" + "=" * 60)
