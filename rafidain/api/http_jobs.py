@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 
@@ -28,6 +30,16 @@ class FinetuneRequest(BaseModel):
     prepare: bool = Field(default=True, description="run dataset preparation first")
     base_checkpoint: str | None = Field(
         default=None, description="start from this checkpoint (default: engine ckpt)"
+    )
+    resume: bool = Field(
+        default=False,
+        description=(
+            "resume full training state from this run; requires prepare=false "
+            "and no base_checkpoint"
+        ),
+    )
+    gdrive: Literal["auto", "none"] = Field(
+        default="none", description="auto-detect a mounted Google Drive for checkpoint sync"
     )
 
 

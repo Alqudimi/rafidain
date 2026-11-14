@@ -304,10 +304,12 @@ def build_webui(app):  # noqa: PLR0915 — a UI builder is naturally long
 
     # ----------------------------- training --------------------------------
     async def _train_submit(
-        dataset_dir, run_name, max_steps, save_every, batch, prepare, gdrive_mode
+        dataset_dir, run_name, max_steps, save_every, batch, prepare, resume, gdrive_mode
     ):
         if not dataset_dir or not Path(dataset_dir).is_dir():
             raise gr.Error(f"مجلد البيانات غير موجود: {dataset_dir}")
+        if resume and prepare:
+            raise gr.Error("للاستئناف أوقف «جهّز البيانات أولاً» واستخدم مجلد البيانات المحضّر نفسه.")
         comp = _components(app)
         from rafidain.application.finetune_service import FinetuneParams
 
@@ -318,7 +320,8 @@ def build_webui(app):  # noqa: PLR0915 — a UI builder is naturally long
             save_every=int(save_every),
             batch_size=int(batch),
             prepare=bool(prepare),
-            extra={"gdrive": gdrive_mode},
+            resume=bool(resume),
+            gdrive=gdrive_mode,
         )
         job_id = await comp.finetune_service.submit(params)
         return job_id, f"🚀 أُطلقت مهمة التدريب `{job_id}` — راقب التقدم أدناه"
@@ -373,8 +376,8 @@ def build_webui(app):  # noqa: PLR0915 — a UI builder is naturally long
         if remote_dir is not None:
             lines.append(f"**أحدث نسخة على Drive:** {remote.name if remote else '—'}")
         lines.append(
-            "\n> التدريب يستأنف تلقائياً من أحدث شيك بوينت (محلي أو من Drive) "
-            "عند إعادة تشغيل نفس `run_name`."
+            "\n> للاستئناف فعّل الخيار صراحةً، أوقف تجهيز البيانات واستخدم المجلد المحضّر نفسه؛ "
+            "لا تُعد استخدام `run_name` لتدريب جديد دون قصد."
         )
         return "\n".join(lines)
 
@@ -610,8 +613,8 @@ def build_webui(app):  # noqa: PLR0915 — a UI builder is naturally long
             with gr.Tab("🎓 التدريب والاستئناف"):
                 gr.Markdown(
                     "ضبط دقيق للهجة العراقية — نفس مسار `run_finetune.py`. "
-                    "الشيك بوينتات تُحفظ تلقائياً إلى Google Drive على Colab "
-                    "ويستأنف التدريب من آخرها عند أي انقطاع."
+                    "الاستئناف خيار صريح؛ استخدم نفس البيانات المحضّرة واسم التشغيل "
+                    "وتحقق من وجود checkpoint قبل تفعيله."
                 )
                 with gr.Row():
                     with gr.Column():
@@ -626,8 +629,11 @@ def build_webui(app):  # noqa: PLR0915 — a UI builder is naturally long
                         train_save = gr.Number(value=250, label="احفظ كل (خطوة)", precision=0)
                         train_batch = gr.Number(value=2, label="حجم الدفعة", precision=0)
                         train_prepare = gr.Checkbox(value=True, label="جهّز البيانات أولاً")
+                        train_resume_ck = gr.Checkbox(
+                            value=False, label="استئناف الحالة الكاملة من checkpoint موجود"
+                        )
                         train_gdrive = gr.Radio(
-                            choices=["auto", "on", "off"],
+                            choices=["auto", "none"],
                             value="auto",
                             label="مزامنة Google Drive",
                         )
@@ -655,7 +661,7 @@ def build_webui(app):  # noqa: PLR0915 — a UI builder is naturally long
                     _train_submit,
                     inputs=[
                         train_dataset, train_run, train_steps, train_save,
-                        train_batch, train_prepare, train_gdrive,
+                        train_batch, train_prepare, train_resume_ck, train_gdrive,
                     ],
                     outputs=[train_job, train_msg],
                 ).then(lambda: gr.update(active=True), outputs=[timer])

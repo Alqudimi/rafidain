@@ -33,7 +33,9 @@ import contextlib
 import os
 import re
 import shutil
+import stat
 import sys
+import tempfile
 import threading
 import time
 from pathlib import Path
@@ -108,27 +110,50 @@ def latest_checkpoint(directory: Path) -> Path | None:
     if not directory.is_dir():
         return None
     candidates = [
-        p for p in directory.glob(CHECKPOINT_GLOB) if _step_of(p) >= 0
+        p
+        for p in directory.glob(CHECKPOINT_GLOB)
+        if _step_of(p) >= 0 and p.is_file() and not p.is_symlink()
     ]
     return max(candidates, key=_step_of) if candidates else None
 
 
 def _same(src: Path, dst: Path) -> bool:
     try:
-        return (
-            src.stat().st_size == dst.stat().st_size
-            and int(src.stat().st_mtime) == int(dst.stat().st_mtime)
-        )
+        src_stat = src.stat()
+        dst_stat = dst.stat()
+        return src_stat.st_size == dst_stat.st_size and src_stat.st_mtime_ns == dst_stat.st_mtime_ns
     except OSError:
         return False
 
 
 def _copy_atomic(src: Path, dst: Path) -> None:
-    """Copy with a temp name + rename so a killed sync never leaves halves."""
+    """Copy a stable regular file via a unique temp + rename; never promote partials."""
     dst.parent.mkdir(parents=True, exist_ok=True)
-    tmp = dst.with_name(dst.name + ".part")
-    shutil.copy2(src, tmp)
-    os.replace(tmp, dst)
+    if src.is_symlink():
+        raise ValueError(f"refusing to copy a symlink checkpoint: {src}")
+    before = src.stat()
+    if not stat.S_ISREG(before.st_mode):
+        raise ValueError(f"refusing to copy a non-regular checkpoint: {src}")
+    legacy_part = dst.with_name(dst.name + ".part")
+    with contextlib.suppress(FileNotFoundError):
+        legacy_part.unlink()
+    fd, tmp_name = tempfile.mkstemp(prefix=f".{dst.name}.", suffix=".part", dir=dst.parent)
+    os.close(fd)
+    tmp = Path(tmp_name)
+    try:
+        shutil.copy2(src, tmp)
+        after = src.stat()
+        copied = tmp.stat()
+        if (
+            before.st_size != after.st_size
+            or before.st_mtime_ns != after.st_mtime_ns
+            or copied.st_size != after.st_size
+        ):
+            raise RuntimeError(f"source changed during checkpoint copy: {src}")
+        os.replace(tmp, dst)
+    finally:
+        with contextlib.suppress(FileNotFoundError):
+            tmp.unlink()
 
 
 def restore(local_dir: Path, remote_dir: Path | None) -> Path | None:
@@ -182,7 +207,10 @@ def push_once(
         return []
     copied: list[Path] = []
 
-    for ckpt in sorted(local_dir.glob(CHECKPOINT_GLOB), key=_step_of):
+    for ckpt in sorted(
+        (p for p in local_dir.glob(CHECKPOINT_GLOB) if p.is_file() and not p.is_symlink()),
+        key=_step_of,
+    ):
         dst = remote_dir / ckpt.name
         if not _same(ckpt, dst):
             _copy_atomic(ckpt, dst)
@@ -193,7 +221,7 @@ def push_once(
         names.append("ft_model.pth")
     for name in names:
         src = local_dir / name
-        if src.is_file():
+        if src.is_file() and not src.is_symlink():
             dst = remote_dir / name
             if not _same(src, dst):
                 _copy_atomic(src, dst)
@@ -257,8 +285,10 @@ class CheckpointSync:
         remote.mkdir(parents=True, exist_ok=True)
         try:
             self.last_push = push_once(
-                self.local_dir, remote,
-                keep_last=self.keep_last, include_final=include_final,
+                self.local_dir,
+                remote,
+                keep_last=self.keep_last,
+                include_final=include_final,
             )
         except Exception as exc:  # noqa: BLE001 — never kill training for sync
             self._log(f"[sync] push failed (will retry): {exc}")
@@ -271,9 +301,7 @@ class CheckpointSync:
         if not self.enabled or self._thread is not None:
             return
         self._stop.clear()
-        self._thread = threading.Thread(
-            target=self._loop, name="rafidain-ckpt-sync", daemon=True
-        )
+        self._thread = threading.Thread(target=self._loop, name="rafidain-ckpt-sync", daemon=True)
         self._thread.start()
         self._log(
             f"[sync] background mirror started: {self.local_dir} → "
@@ -303,8 +331,10 @@ class CheckpointSync:
 
 def _seed_root_from_env() -> Path:
     env = os.environ.get("SEED_VC_ROOT", "").strip()
-    return Path(env).expanduser().resolve() if env else (
-        Path(__file__).resolve().parents[1] / "third_party" / "seed-vc"
+    return (
+        Path(env).expanduser().resolve()
+        if env
+        else (Path(__file__).resolve().parents[1] / "third_party" / "seed-vc")
     )
 
 
@@ -330,8 +360,10 @@ def main() -> int:
 
     if args.cmd == "watch":
         sync = CheckpointSync(
-            args.local_dir, default_remote_root(gdrive),
-            interval_s=args.interval, keep_last=args.keep_last,
+            args.local_dir,
+            default_remote_root(gdrive),
+            interval_s=args.interval,
+            keep_last=args.keep_last,
         )
         sync.restore_first()
         sync.start()

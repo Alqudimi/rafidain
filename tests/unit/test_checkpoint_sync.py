@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import time
 from pathlib import Path
 
@@ -117,9 +118,7 @@ class TestCheckpointSyncThread:
         local, remote = tmp_path / "local", tmp_path / "remote"
         _make_ckpt(local, 700)
         logs: list[str] = []
-        sync = CheckpointSync(
-            local, remote, interval_s=5.0, keep_last=3, log=logs.append
-        )
+        sync = CheckpointSync(local, remote, interval_s=5.0, keep_last=3, log=logs.append)
         # shrink the floor so the thread fires quickly in tests
         monkeypatch.setattr(sync, "interval_s", 0.05)
         assert sync.enabled
@@ -170,6 +169,25 @@ class TestAtomicSafety:
         push_once(local, remote, keep_last=3)
         assert (remote / ckpt.name).read_bytes() == b"x" * 64
         assert not (remote / (ckpt.name + ".part")).exists()
+
+    def test_changing_source_is_not_promoted(self, tmp_path: Path, monkeypatch):
+        src = _make_ckpt(tmp_path / "src", 20)
+        dst = tmp_path / "dst" / "checkpoint.pth"
+        dst.parent.mkdir()
+        dst.write_bytes(b"previous-good-checkpoint")
+        real_copy2 = shutil.copy2
+
+        def copy_then_mutate(source, target):
+            result = real_copy2(source, target)
+            source.write_bytes(b"y" * 64)
+            os.utime(source, ns=(time.time_ns(), time.time_ns()))
+            return result
+
+        monkeypatch.setattr("finetune.checkpoint_sync.shutil.copy2", copy_then_mutate)
+        with pytest.raises(RuntimeError, match="source changed"):
+            _copy_atomic(src, dst)
+        assert dst.read_bytes() == b"previous-good-checkpoint"
+        assert list(dst.parent.glob("*.part")) == []
 
 
 @pytest.mark.parametrize("mtime_drift", [0, 1])

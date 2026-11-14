@@ -229,7 +229,7 @@ CELLS_B.append(("code", r'''# ==================================================
 #  إلى القرص المحلي فيستأنف التدريب من حيث توقف                #
 #  (خلية استباقية: لا تفعل شيئاً إن كان المحلي أحدث أو لا نسخة)#
 # ============================================================ #
-import shutil, re
+import shutil, re, os, tempfile
 from pathlib import Path
 
 DRIVE_OK   = globals().get("DRIVE_OK", False)
@@ -239,16 +239,40 @@ def _step_of(p: Path):
     m = re.search(r"step_(\d+)", p.stem)
     return int(m.group(1)) if m else -1
 
-loc_ckpts = sorted(RUN_DIR.glob("DiT_epoch_*_step_*.pth"), key=_step_of)
+loc_ckpts = sorted((p for p in RUN_DIR.glob("DiT_epoch_*_step_*.pth")
+                    if p.is_file() and not p.is_symlink()), key=_step_of)
 loc_ft    = RUN_DIR / "ft_model.pth"
 drv       = (DRIVE_ROOT / "runs" / CFG["RUN_NAME"]) if (DRIVE_OK and DRIVE_ROOT) else None
+
+def _restore_atomic(src: Path, dst: Path):
+    if src.is_symlink() or not src.is_file():
+        raise ValueError(f"refusing non-regular checkpoint source: {src}")
+    before = src.stat()
+    fd, tmp_name = tempfile.mkstemp(prefix=f".{dst.name}.", suffix=".part", dir=dst.parent)
+    os.close(fd)
+    tmp = Path(tmp_name)
+    try:
+        shutil.copy2(src, tmp)
+        after = src.stat()
+        copied = tmp.stat()
+        if (before.st_size != after.st_size or before.st_mtime_ns != after.st_mtime_ns
+                or copied.st_size != after.st_size):
+            raise RuntimeError(f"source changed during checkpoint restore: {src.name}")
+        os.replace(tmp, dst)
+    finally:
+        tmp.unlink(missing_ok=True)
 
 if loc_ckpts or loc_ft.exists():
     last = f" (حتى الخطوة {_step_of(loc_ckpts[-1])})" if loc_ckpts else ""
     print(f"[محلي] توجد نقاط محلية أصلاً{last} — لا حاجة للاستعادة.")
     print("        (لفرض الاستعادة من Drive احذف مجلد التشغيل المحلي ثم أعد هذه الخلية)")
 elif drv and drv.exists():
-    files = [p for p in drv.iterdir() if p.is_file()] if drv.is_dir() else []
+    files = ([p for p in drv.iterdir()
+              if p.is_file() and not p.is_symlink()
+              and (re.fullmatch(r"DiT_epoch_\d+_step_\d+\.pth", p.name)
+                   or p.name in {"ft_model.pth", "train_console.log", "loss_curve.png",
+                                 "config_dit_mel_seed_uvit_whisper_base_f0_44k.yml"})]
+             if drv.is_dir() else [])
     if not files:
         print(f"[Drive] لا توجد نسخة احتياطية سابقة في {drv} — تشغيل جديد كلياً.")
     else:
@@ -256,7 +280,7 @@ elif drv and drv.exists():
         RUN_DIR.mkdir(parents=True, exist_ok=True)
         for f in files:
             print(f"  + {f.name}  ({f.stat().st_size/1e6:.1f} MB)")
-            shutil.copy2(f, RUN_DIR / f.name)
+            _restore_atomic(f, RUN_DIR / f.name)
         ck = sorted(RUN_DIR.glob("DiT_epoch_*_step_*.pth"), key=_step_of)
         if ck:
             print(f"\n[تم] أُعيدت أحدث نقطة إلى الخطوة {_step_of(ck[-1])} — التدريب سيكمل منها (الخلية 14).")
@@ -284,7 +308,7 @@ CFG_MODEL = SEEDVC / "configs" / "presets" / "config_dit_mel_seed_uvit_whisper_b
 # ---- 0) كتابة مزامن النسخ إلى Drive (stdlib فقط — يعمل بأي بايثون) ----
 SYNC_SCRIPT = ROOT / "drive_sync_loop.py"
 SYNC_SCRIPT.write_text(r'''
-import os, sys, time, shutil
+import os, sys, time, shutil, tempfile
 from pathlib import Path
 
 RUN_DIR  = Path(sys.argv[1])   # مجلد التشغيل المحلي
@@ -306,17 +330,38 @@ def _alive(pid):
     except Exception:
         return False
 
+def _copy_atomic(src, dst):
+    if src.is_symlink() or not src.is_file():
+        raise ValueError(f"refusing non-regular checkpoint source: {src}")
+    before = src.stat()
+    fd, tmp_name = tempfile.mkstemp(prefix=f".{dst.name}.", suffix=".part", dir=dst.parent)
+    os.close(fd)
+    tmp = Path(tmp_name)
+    try:
+        shutil.copy2(src, tmp)
+        after = src.stat()
+        copied = tmp.stat()
+        if (before.st_size != after.st_size or before.st_mtime_ns != after.st_mtime_ns
+                or copied.st_size != after.st_size):
+            raise RuntimeError(f"source changed during checkpoint copy: {src.name}")
+        os.replace(tmp, dst)
+        return True
+    finally:
+        try: tmp.unlink()
+        except FileNotFoundError: pass
+
 def sync_once():
     if not RUN_DIR.exists():
         return 0
     DRV_DIR.mkdir(parents=True, exist_ok=True)
     n = 0
     # نقاط DiT: الأحدث KEEP فقط (كل نقطة تحمل net+optimizer+scheduler)
-    ck = sorted(RUN_DIR.glob("DiT_epoch_*_step_*.pth"), key=_step)
+    ck = sorted((p for p in RUN_DIR.glob("DiT_epoch_*_step_*.pth")
+                 if p.is_file() and not p.is_symlink()), key=_step)
     for p in ck[-KEEP:]:
         d = DRV_DIR / p.name
         if (not d.exists()) or (d.stat().st_mtime < p.stat().st_mtime):
-            shutil.copy2(p, d); n += 1
+            n += int(_copy_atomic(p, d))
     for p in sorted(DRV_DIR.glob("DiT_epoch_*_step_*.pth"), key=_step)[:-KEEP]:
         try: p.unlink()
         except Exception: pass
@@ -327,7 +372,7 @@ def sync_once():
         if s.exists():
             d = DRV_DIR / name
             if (not d.exists()) or (d.stat().st_mtime < s.stat().st_mtime):
-                shutil.copy2(s, d); n += 1
+                n += int(_copy_atomic(s, d))
     return n
 
 if ONCE:
@@ -390,11 +435,16 @@ else:
     import os as _os, sys as _sys
     _os.chdir(SEEDVC)
     _sys.path.insert(0, str(SEEDVC))
+    _sys.path.insert(0, str(RAFIDAIN))
+    from finetune.upstream_patch import ensure_full_state_resume
+    _patched = ensure_full_state_resume(SEEDVC)
+    print("[resume] استعادة optimizer/step/epoch مفعّلة للـ rolling checkpoints" if _patched
+          else "[resume] patch متحقق مسبقاً")
     import train as SEED_TRAIN   # وحدة المدرب الرسمية — نفسها التي تستخدمها train.py
 
     trainer = SEED_TRAIN.Trainer(
         config_path=str(CFG_MODEL),
-        pretrained_ckpt_path=None,     # None = يكتشف أحدث نقطة في مجلد التشغيل تلقائياً (استئناف)
+        pretrained_ckpt_path=None,     # يحمّل آخر rolling checkpoint بحالة تدريب كاملة عند وجوده
         data_dir=str(DATA_DIR),
         run_name=CFG["RUN_NAME"],
         batch_size=BATCH,

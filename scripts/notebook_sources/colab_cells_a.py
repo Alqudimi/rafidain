@@ -490,15 +490,24 @@ CELLS_A.append(("code", r'''# ==================================================
 # ============================================================ #
 from pathlib import Path
 
-def git_clone(url, dst):
+SEEDVC_COMMIT = "51383efd921027683c89e5348211d93ff12ac2a8"
+
+def git_clone(url, dst, revision=None):
     if (dst / ".git").exists():
         print(f"تحديث {dst.name} ...")
-        sh(["git", "-C", str(dst), "pull", "--ff-only"], check=False)
+        if revision:
+            sh(["git", "-C", str(dst), "fetch", "--depth", "1", "origin", revision])
+            sh(["git", "-C", str(dst), "checkout", "--detach", revision])
+        else:
+            sh(["git", "-C", str(dst), "pull", "--ff-only"], check=False)
     else:
         print(f"استنساخ {dst.name} من {url} ...")
         sh(["git", "clone", "--depth", "1", url, str(dst)])
+        if revision:
+            sh(["git", "-C", str(dst), "fetch", "--depth", "1", "origin", revision])
+            sh(["git", "-C", str(dst), "checkout", "--detach", revision])
 
-git_clone("https://github.com/Plachtaa/seed-vc.git", SEEDVC)
+git_clone("https://github.com/Plachtaa/seed-vc.git", SEEDVC, revision=SEEDVC_COMMIT)
 git_clone("https://github.com/Alqudimi/rafidain.git", RAFIDAIN)
 
 # تحقق من الملفات الحرجة
@@ -506,6 +515,7 @@ for f in ("train.py", "inference.py", "configs/presets/config_dit_mel_seed_uvit_
     assert (SEEDVC / f).exists(), f"ملف مفقود في seed-vc: {f}"
 assert (RAFIDAIN / "seed_vc_iraqi_ubuntu.sh").exists(), "سكربت خط البيانات مفقود في rafidain"
 print(f"\n[جاهز] seed-vc   : {SEEDVC}")
+print(f"[جاهز] seed-vc revision: {SEEDVC_COMMIT}")
 print(f"[جاهز] rafidain  : {RAFIDAIN}")'''))
 
 # ============================================================ CODE 7 — extract pipeline

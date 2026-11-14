@@ -53,11 +53,11 @@
 
 ```bash
 uv run python finetune/prepare_dataset.py --input-dir ./raw_iraqi
-# ينتج: ./raw_iraqi/prepared/*.wav  (22.05kHz أحادي 16bit، 1–28 ث، مُطبَّع، مقصوص الصمت)
-#        ./raw_iraqi/prepared/manifest.jsonl  (مسار/مدة/مصدر/بصمة)
+# ينتج: ./raw_iraqi/prepared/*.wav  (22.05kHz أحادي PCM-16، 1–28 ث، مطبّع، مقصوص الصمت)
+#        ./raw_iraqi/prepared/manifest.jsonl  (المدة/المصدر/بصمتا SHA-256 ومعلمات المعالجة)
 ```
 
-السكربت يطبع الذروة إلى -3dBFS، يقصّ الصمت المتطرف (بوابة طاقة -45dB)، يضيف fade 50ms لكل مقطع، ويطبع تقريراً بالساعات الكلية.
+السكربت يطبع الذروة إلى -3dBFS، يقصّ الصمت المتطرف (RMS على إطارات 20ms وعتبة -45dBFS)، يختار حدود التقطيع قرب مقاطع هادئة، ويضيف fade خطياً 10ms لكل حافة. يُنتج كل تشغيل في مجلد staging مستقل، وينشر manifest بعد نجاح المرور؛ لا يخلط ملفات قديمة بصمت. لإعادة بناء `prepared/` استخدم `--overwrite` بعد مراجعة المسار.
 
 ## 5) التدريب
 
@@ -69,12 +69,15 @@ curl -X POST http://host/api/v1/finetune/jobs \
   -d '{
         "dataset_dir": "/srv/datasets/iraqi_prepared",
         "run_name": "iraqi_v1",
+        "prepare": false,
         "max_steps": 2000, "save_every": 250, "batch_size": 2
       }'
 # → {"job_id": "..."} ثم:
 curl http://host/api/v1/finetune/jobs/<job_id>          # حالة + تقدم + آخر السجلات
 curl -X POST http://host/api/v1/finetune/jobs/<job_id>/cancel
 ```
+
+للاستئناف أرسل طلباً جديداً باسم التشغيل نفسه مع `"resume": true`, و`"prepare": false`، و`"gdrive": "auto"` عند الحاجة إلى النسخة البعيدة. يجب أن يوجد rolling checkpoint؛ لا تجمع `resume` مع `base_checkpoint`.
 
 ### عبر CLI (على عقدة الـ GPU مباشرة)
 
@@ -84,7 +87,16 @@ uv run python finetune/run_finetune.py \
   --run-name iraqi_v1 --max-steps 2000 --save-every 250 --batch-size 2
 ```
 
-الغلاف يضمن البدء من نقطة منشورة (لا تدريب من الصفر؛ دفتر Colab v3.1 يستخدم `DiT_seed_v2_uvit_whisper_base_f0_44k_bigvgan_pruned_ft_ema.pth`)، يُصدر علامات `[progress]`، ويستأنف تلقائياً إن وُجدت نقاط سابقة في `runs/<run_name>/`.
+الغلاف يبدأ من نقطة Seed-VC المنشورة عندما يكون `run-name` جديداً، ويُصدر علامات `[progress]`. يرفض إعادة استعمال `run-name` له checkpoint سابق ما لم تطلب الاستئناف صراحةً؛ هذا يمنع تهيئة أوزان فقط على أنها استمرار أو استبدال run عن غير قصد:
+
+```bash
+# استئناف optimizer/step/epoch من أحدث rolling checkpoint
+uv run python finetune/run_finetune.py \
+  --dataset-dir ./raw_iraqi/prepared \
+  --run-name iraqi_v1 --max-steps 3000 --resume --gdrive auto
+```
+
+يتحقق الغلاف من layout upstream المتوقع، ثم يحمّل حالة المحسّن/الجدولة/الخطوة/epoch للنقاط داخل مجلد التشغيل فقط؛ نقطة الأساس المنشورة أو `--pretrained-ckpt` تبقى تهيئة أوزان فقط. الاستئناف يحافظ على state/step ولا يضمن استعادة ترتيب الأمثلة bit-for-bit لأن upstream لا يحفظ حالة RNG/المُعيّن. عند وجود checkpoint بعيد أحدث، `--resume` يستعيده ذرياً أولاً. استخدم اسماً جديداً لتدريب مستقل، ولا تحذف checkpoint بغرض "الاستئناف".
 
 ### المعاملات الموصى بها (مطابقة لمنبع Seed-VC)
 

@@ -98,6 +98,23 @@ async def test_finetune_submit_requires_dataset(tmp_path):
         await service.submit(FinetuneParams(dataset_dir=str(tmp_path / "nope")))
 
 
+async def test_finetune_resume_requires_prepared_data_and_no_base_checkpoint(tmp_path):
+    from rafidain.application.finetune_service import FinetuneParams, FinetuneService
+
+    dataset = tmp_path / "ds"
+    dataset.mkdir()
+    settings = Settings(_env_file=None, engine={"impl": "mock"}, data_dir=tmp_path / "d")
+    service = FinetuneService(settings)
+    with pytest.raises(JobError, match="prepare=False"):
+        await service.submit(FinetuneParams(dataset_dir=str(dataset), resume=True, prepare=True))
+    with pytest.raises(JobError, match="base_checkpoint"):
+        await service.submit(
+            FinetuneParams(
+                dataset_dir=str(dataset), resume=True, prepare=False, base_checkpoint="base.pth"
+            )
+        )
+
+
 async def test_finetune_submit_requires_seedvc_repo(tmp_path, monkeypatch):
     from rafidain.application.finetune_service import FinetuneParams, FinetuneService
 

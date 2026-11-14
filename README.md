@@ -187,6 +187,9 @@ uv run python finetune/prepare_dataset.py --input-dir ./raw_iraqi
 
 # 2) التدريب — إما CLI مباشرة:
 uv run python finetune/run_finetune.py --dataset-dir ./raw_iraqi/prepared \
+    --run-name iraqi_v1 --max-steps 2000
+# أو مرّر مجلد الصوت الخام مع --prepare لتجهيزه تلقائياً:
+uv run python finetune/run_finetune.py --dataset-dir ./raw_iraqi \
     --run-name iraqi_v1 --max-steps 2000 --prepare
 
 #    أو عبر الـ API (متابعة تقدم + سجلات + إلغاء):
@@ -204,7 +207,7 @@ uv run python evaluation/benchmark_stream.py --profile balanced
 ## 7) الاختبارات والمراقبة
 
 ```bash
-make test        # 102 اختباراً — بدون GPU (المحرك الوهمي)
+make test        # اختبارات وحدات وتكامل — بدون GPU (المحرك الوهمي)
 make lint        # ruff
 make bench       # قياس RTF/زمن الكتلة على جهازك الفعلي
 ```

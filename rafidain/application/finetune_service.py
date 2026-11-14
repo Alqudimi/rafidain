@@ -43,6 +43,8 @@ class FinetuneParams:
     gpu: int = 0
     prepare: bool = True  # run dataset preparation first
     base_checkpoint: str | None = None  # default: current engine checkpoint
+    resume: bool = False  # restore full training state from this run's rolling checkpoint
+    gdrive: str = "none"
     extra: dict = field(default_factory=dict)
 
     def as_dict(self) -> dict:
@@ -57,6 +59,8 @@ class FinetuneParams:
             "gpu": self.gpu,
             "prepare": self.prepare,
             "base_checkpoint": self.base_checkpoint,
+            "resume": self.resume,
+            "gdrive": self.gdrive,
             **self.extra,
         }
 
@@ -75,6 +79,13 @@ class FinetuneService:
         return self._queue
 
     async def submit(self, params: FinetuneParams) -> str:
+        if params.resume and params.prepare:
+            raise JobError("resume requires prepare=False; pass the already-prepared dataset")
+        if params.resume and params.base_checkpoint:
+            raise JobError("resume cannot be combined with base_checkpoint")
+        gdrive_mode = params.extra.get("gdrive", params.gdrive)
+        if gdrive_mode not in {"auto", "none"}:
+            raise JobError("gdrive must be one of auto, none")
         dataset = Path(params.dataset_dir).expanduser()
         if not dataset.is_dir():
             raise JobError(f"dataset_dir does not exist: {dataset}")
@@ -132,6 +143,9 @@ class FinetuneService:
             cmd.append("--prepare")
         if params.get("base_checkpoint"):
             cmd += ["--pretrained-ckpt", str(params["base_checkpoint"])]
+        if params.get("resume"):
+            cmd.append("--resume")
+        cmd += ["--gdrive", str(params.get("gdrive", "none"))]
 
         env = dict(os.environ)
         env.setdefault("PYTHONUNBUFFERED", "1")

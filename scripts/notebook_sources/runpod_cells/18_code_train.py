@@ -51,6 +51,12 @@ elif train_alive():
     print(f"التدريب يعمل الآن (PID {PIDF.read_text().strip()}) — راقبه بالخلية 15.")
 else:
     RUN_DIR.mkdir(parents=True, exist_ok=True)
+    import sys as _sys
+    _sys.path.insert(0, str(RAFIDAIN))
+    from finetune.upstream_patch import ensure_full_state_resume
+    _patched = ensure_full_state_resume(SEEDVC)
+    print("[resume] upstream training-state restore enabled" if _patched
+          else "[resume] upstream patch already present")
     if PIDF.exists():
         PIDF.unlink()   # بقايا عملية ميتة
     cmd = [str(VENV_PY), "-u", "train.py",

@@ -6,15 +6,24 @@
 import subprocess, json
 from pathlib import Path
 
-def git_clone(url, dst):
+SEEDVC_COMMIT = "51383efd921027683c89e5348211d93ff12ac2a8"
+
+def git_clone(url, dst, revision=None):
     if (dst / ".git").exists():
         print(f"تحديث {dst.name} ...")
-        sh(["git", "-C", str(dst), "pull", "--ff-only"], check=False)
+        if revision:
+            sh(["git", "-C", str(dst), "fetch", "--depth", "1", "origin", revision])
+            sh(["git", "-C", str(dst), "checkout", "--detach", revision])
+        else:
+            sh(["git", "-C", str(dst), "pull", "--ff-only"], check=False)
     else:
         print(f"استنساخ {dst.name} من {url} ...")
         sh(["git", "clone", "--depth", "1", url, str(dst)])
+        if revision:
+            sh(["git", "-C", str(dst), "fetch", "--depth", "1", "origin", revision])
+            sh(["git", "-C", str(dst), "checkout", "--detach", revision])
 
-git_clone("https://github.com/Plachtaa/seed-vc.git", SEEDVC)
+git_clone("https://github.com/Plachtaa/seed-vc.git", SEEDVC, revision=SEEDVC_COMMIT)
 git_clone("https://github.com/Alqudimi/rafidain.git", RAFIDAIN)
 
 # تحقق من الملفات الحرجة
@@ -34,6 +43,7 @@ def git_hash(path):
 repro = {
     "notebook_version": NB_VERSION,
     "seedvc_commit": git_hash(SEEDVC),
+    "seedvc_expected_commit": SEEDVC_COMMIT,
     "rafidain_commit": git_hash(RAFIDAIN),
     "captured_at": time.strftime("%Y-%m-%d %H:%M:%S"),
 }

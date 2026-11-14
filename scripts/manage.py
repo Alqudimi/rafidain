@@ -36,6 +36,7 @@ from pathlib import Path
 from typing import Any
 
 REPO = Path(__file__).resolve().parents[1]
+SEEDVC_REVISION = "51383efd921027683c89e5348211d93ff12ac2a8"
 RUN_DIR = REPO / ".run"
 SERVER_PID = RUN_DIR / "server.pid"
 SERVER_LOG = RUN_DIR / "server.log"
@@ -274,15 +275,41 @@ def cmd_install(args: argparse.Namespace) -> int:
 
 def cmd_seedvc(args: argparse.Namespace) -> int:
     dest = REPO / "third_party" / "seed-vc"
-    if (dest / "train.py").exists() and not args.force:
-        ok(f"Seed-VC already present: {dest}")
+    revision = getattr(args, "revision", SEEDVC_REVISION)
+    force = getattr(args, "force", False)
+    if dest.exists() and not force:
+        try:
+            current = subprocess.check_output(
+                ["git", "-C", str(dest), "rev-parse", "HEAD"], text=True
+            ).strip()
+        except (OSError, subprocess.CalledProcessError):
+            die(f"Seed-VC directory is not a valid Git checkout: {dest}; inspect or remove it")
+        if current != revision:
+            die(
+                f"Seed-VC is at {current}, expected audited revision {revision}. "
+                "Use --force to replace it (local changes will be removed)."
+            )
+        ok(f"Seed-VC already present at audited revision {current}: {dest}")
         return 0
-    say("cloning Plachtaa/seed-vc (engine code + training)…")
+    if dest.exists():
+        shutil.rmtree(dest)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    say(f"cloning Seed-VC revision {revision} (engine code + training)…")
     code = subprocess.call(
         ["git", "clone", "--depth", "1", args.repo, str(dest)], cwd=REPO
     )
     if code != 0:
         die("git clone failed — check the network")
+    code = subprocess.call(
+        ["git", "-C", str(dest), "fetch", "--depth", "1", "origin", revision], cwd=REPO
+    )
+    if code == 0:
+        code = subprocess.call(
+            ["git", "-C", str(dest), "checkout", "--detach", revision], cwd=REPO
+        )
+    if code != 0:
+        shutil.rmtree(dest, ignore_errors=True)
+        die(f"could not check out Seed-VC revision {revision}")
     ok(f"Seed-VC ready at {dest}")
     return 0
 
@@ -659,6 +686,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("seedvc", help="clone the Seed-VC repository (third_party/)")
     p.add_argument("--repo", default="https://github.com/Plachtaa/seed-vc")
+    p.add_argument(
+        "--revision", default=SEEDVC_REVISION,
+        help="audited upstream commit (default pins the verified training/checkpoint contract)",
+    )
     p.add_argument("--force", action="store_true", help="re-clone even if present")
     p.set_defaults(func=cmd_seedvc)
 
