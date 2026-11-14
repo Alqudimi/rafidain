@@ -431,17 +431,25 @@ CELLS_A.append(("code", r'''# ==================================================
 #  (محلية على /content: تُعاد بناؤها بعد أي إعادة تعيين جلسة — #
 #   هذا طبيعي وتستغرق 3-8 دقائق فقط بفضل تخطّي المنجز)         #
 # ============================================================ #
-import subprocess, shutil, sys
+import shutil, sys, site
 from pathlib import Path
 
 UV = globals().get("UV") or shutil.which("uv")   # تحصين: يعمل حتى بعد إعادة تشغيل النواة
 
+def _sync_kernel_env():
+    """ربط حزم البيئة بنواة النوت بوك مباشرة للاستيراد بلا subprocess."""
+    if VENV_PY.exists():
+        for sp in (ROOT / "venv" / "lib").glob("python*/site-packages"):
+            site.addsitedir(str(sp))
+
 def venv_ok(code):
-    # فحص سريع داخل البيئة المعزولة
-    if not VENV_PY.exists():
+    # فحص مباشر داخل النواة
+    _sync_kernel_env()
+    try:
+        exec(code, {})
+        return True
+    except Exception:
         return False
-    r = subprocess.run([str(VENV_PY), "-c", code], capture_output=True, text=True, env=ENV)
-    return r.returncode == 0
 
 # ---- 1) إنشاء venv إن لم يوجد ----
 if not VENV_PY.exists():
@@ -450,6 +458,7 @@ if not VENV_PY.exists():
         sh([UV, "venv", "--python", "3.11", str(ROOT / "venv")])
     else:
         sh([sys.executable, "-m", "venv", str(ROOT / "venv")])
+    _sync_kernel_env()
 
 # ---- 2) PyTorch 2.4.0 cu121 (نحو 2.5GB — يُتخطى إن كان مثبتاً) ----
 if not venv_ok("import torch; assert torch.__version__.startswith('2.4.')"):
@@ -465,6 +474,7 @@ if not venv_ok("import torch; assert torch.__version__.startswith('2.4.')"):
         rc = sh([str(VENV_PY), "-m", "pip", "install", "-q", *trio_pin, *idx], check=False)
         if rc != 0:
             sh([str(VENV_PY), "-m", "pip", "install", "-q", *trio_any, *idx])
+    _sync_kernel_env()
 else:
     print("PyTorch 2.4.x موجود أصلاً في البيئة — تخطّي التثبيت.")
 
@@ -486,16 +496,16 @@ if not venv_ok(NEED):
         rc = sh([str(VENV_PY), "-m", "pip", "install", "-q", *pins], check=False)
         if rc != 0:
             sh([str(VENV_PY), "-m", "pip", "install", "-q", *loose])
+    _sync_kernel_env()
 else:
     print("الاعتماديات موجودة أصلاً — تخطّي التثبيت.")
 
-# ---- 4) تحقق نهائي ----
-r = subprocess.run([str(VENV_PY), "-c",
-                    "import torch, torchaudio; print('torch', torch.__version__, '| cuda:', torch.cuda.is_available())"],
-                   capture_output=True, text=True, env=ENV)
-print((r.stdout + r.stderr).strip())
-assert r.returncode == 0 and "torch 2.4" in (r.stdout + r.stderr), "فشل بناء البيئة — راجع السجل أعلاه"
-print(f"\n[جاهز] البيئة المعزولة: {VENV_PY}")'''))
+# ---- 4) تحقق نهائي عبر الاستيراد المباشر ----
+_sync_kernel_env()
+import torch, torchaudio
+print(f"torch {torch.__version__} | cuda: {torch.cuda.is_available()}")
+assert torch.__version__.startswith("2.4"), f"توقعنا PyTorch 2.4 ولكن وجدنا {torch.__version__}"
+print(f"\n[جاهز] بيئة التدريب جاهزة للاستيراد المباشر في النواة: {VENV_PY}")'''))
 
 # ============================================================ CODE 6 — clone repos + import modules
 CELLS_A.append(("code", r'''# ============================================================ #
@@ -525,11 +535,13 @@ assert PIPE_SRC.exists(), "iraqi_pipeline_v3.py مفقود في rafidain"
 print(f"[جاهز] seed-vc   : {SEEDVC}")
 print(f"[جاهز] rafidain  : {RAFIDAIN}")
 
+# ---- إدراج مسارات المستودعات في sys.path للاستيراد المباشر ----
+for p in (SEEDVC, SEEDVC / "modules", RAFIDAIN, PIPE_SRC.parent):
+    if str(p) not in sys.path:
+        sys.path.insert(0, str(p))
+
 # ---- استيراد خط بيانات العراق من المستودع المستنسخ (مصدر واحد للحقيقة) ----
-# ملاحظة: نستورده بنواة النوت بوك (نفس المنطق الذي ستستورده به البيئة المعزولة لاحقاً)
-# ليستخدمه التدريب؛ الاعتماديات الثقيلة (torch/transformers) غير مطلوبة لهذه الوحدة
-# إلا في أوامر fetch — والأوامر التي نستدعيها هنا (prefetch/export/stats/verify)
-# تعمل داخل البيئة المعزولة عبر runpy بنفس الوحدة.
+# استيراد مباشر في نواة النوت بوك — بلا subprocess
 import importlib.util as _ilu
 _spec = _ilu.spec_from_file_location("iraqi_pipeline", PIPE_SRC)
 PIPELINE = _ilu.module_from_spec(_spec)
@@ -537,12 +549,10 @@ _spec.loader.exec_module(PIPELINE)
 print(f"[استيراد] iraqi_pipeline: {len(PIPELINE.CLIPS):,} مقطعاً / {PIPELINE.TOTAL_CLIP_HOURS:.0f} ساعة في الكتالوج")
 
 # وحدة مزامنة النقاط من رافِدَين (restore/push_once — بلا خيوط خلفية)
-sys.path.insert(0, str(RAFIDAIN))
 from finetune import checkpoint_sync as CKPT_SYNC
 print(f"[استيراد] finetune.checkpoint_sync: {CKPT_SYNC.__name__}")
 
-# مدرب واستدلال Seed-VC: يستوردان في خلايا التدريب/التحقق داخل البيئة المعزولة
-# (يحتاجان torch 2.4 + CUDA — نستوردهما هناك بالضبط قبل الاستخدام)
+# مدرب واستدلال Seed-VC: يستوردان مباشرة في خلايا التدريب/التحقق عبر import
 SEEDVC_CFG = SEEDVC / "configs" / "presets" / "config_dit_mel_seed_uvit_xlsr_tiny.yml"
 print(f"[مسار] إعداد التدريب الرسمي: {SEEDVC_CFG}")
-print("\n[جاهز] المستودعات مستنسخة والوحدات قابلة للاستيراد — تابع إلى خلية البيانات الجاهزة (7).")'''))
+print("\n[جاهز] المستودعات مستنسخة والمسارات جاهزة للاستيراد المباشر — تابع إلى خلية البيانات الجاهزة (7).")'''))

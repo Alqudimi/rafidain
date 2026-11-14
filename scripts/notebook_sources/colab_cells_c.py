@@ -94,12 +94,13 @@ else:
 CELLS_C.append(("code", r'''# ============================================================ #
 #  الخلية ١٢ — التدريب: في مقدمة هذه الخلية مباشرة             #
 #  استيراد train.py من seed-vc وإنشاء Trainer وتشغيله —        #
-#  بلا عملية خلفية ولا PID ولا مراقب ولا حلقة انتظار          #
+#  استدعاء مباشر عبر import بلا subprocess وبلا train_driver.py#
 #  كل نقطة حفظ تُنسخ فوراً إلى Drive من داخل عملية التدريب     #
 #  (غلاف torch.save) — والسجل الكامل يُحفظ في train_console.log#
 # ============================================================ #
-import os, sys, time, json, subprocess, contextlib
+import os, sys, time, json, shutil, io, contextlib
 from pathlib import Path
+import torch
 
 FT = RUN_DIR / "ft_model.pth"
 
@@ -107,138 +108,110 @@ if FT.exists():
     print(f"النموذج النهائي موجود أصلاً: {FT}")
     print("لتدريب جديد كلياً: غيّر RUN_NAME في الخلية 2 (أو احذف ft_model.pth ثم أعد هذه الخلية).")
 else:
-    BATCH  = int(CFG["_BATCH"] or 2)
-    MAXS   = int(CFG["STEPS"])
-    WANTS  = int(CFG["TRAIN_WORKERS"])
-    DRV_RUN = drive_run_dir() if CFG.get("DRIVE_BACKUP", True) else None
-    KEEP   = int(CFG.get("DRIVE_CKPT_KEEP", 2))
+    BATCH      = int(CFG["_BATCH"] or 2)
+    MAXS       = int(CFG["STEPS"])
+    WORKERS    = int(CFG["TRAIN_WORKERS"])
+    DRV_RUN    = drive_run_dir() if CFG.get("DRIVE_BACKUP", True) else None
+    KEEP       = int(CFG.get("DRIVE_CKPT_KEEP", 2))
+    SAVE_EVERY = int(CFG["SAVE_EVERY"])
 
-    # برنامج التدريب: يستورد train.py من seed-vc، يغلّف torch.save بمرآة Drive،
-    # ويعيد التوجيه المزدوج (stdout) إلى الشاشة و train_console.log معاً
-    # (TQ = فاصل ثلاثي-اقتباس يُبنى بـ chr(34) حتى لا يتصادم مع غلاف الخلية)
-    TQ = chr(34) * 3
-    TRAIN_DRIVER = (
-        "import os, sys, time, json, shutil, contextlib, io\n"
-        "import torch\n"
-        "\n"
-        "SEEDVC   = sys.argv[1]\n"
-        "RUN_DIR  = sys.argv[2]\n"
-        "DATA_DIR = sys.argv[3]\n"
-        "CFG_PATH = sys.argv[4]\n"
-        "DRV_RUN  = sys.argv[5] or None\n"
-        "KEEP     = int(sys.argv[6])\n"
-        "BATCH    = int(sys.argv[7])\n"
-        "MAXS     = int(sys.argv[8])\n"
-        "SAVE_EVERY = int(sys.argv[9])\n"
-        "WORKERS  = int(sys.argv[10])\n"
-        "\n"
-        "CFG = json.load(open(CFG_PATH, encoding=\"utf-8\"))\n"
-        "\n"
-        "os.chdir(SEEDVC)                    # train.py يفتح configs/hifigan.yml و./checkpoints نسبياً\n"
-        "sys.path.insert(0, SEEDVC)\n"
-        "sys.path.insert(0, os.path.join(SEEDVC, \"modules\"))\n"
-        "\n"
-        "import train as seed_train          # وحدة المدرب الرسمية — بلا سطر أوامر\n"
-        "\n"
-        "class Tee(io.TextIOBase):\n"
-        "    \"\"\"stdout مزدوج: الشاشة (تُمرر عبر الأنبوب للنواة) + ملف السجل.\"\"\"\n"
-        "    def __init__(self, original, path):\n"
-        "        self.original = original\n"
-        "        self.file = open(path, \"a\", encoding=\"utf-8\", buffering=1)\n"
-        "    def write(self, s):\n"
-        "        self.original.write(s)\n"
-        "        self.file.write(s)\n"
-        "        return len(s)\n"
-        "    def flush(self):\n"
-        "        self.original.flush()\n"
-        "        self.file.flush()\n"
-        "\n"
-        "_log_path = os.path.join(RUN_DIR, \"train_console.log\")\n"
-        "os.makedirs(RUN_DIR, exist_ok=True)\n"
-        "\n"
-        "# ---- مرآة Drive اللحظية: غلاف حول torch.save ينسخ النقاط فور حفظها ----\n"
-        "_real_save = torch.save\n"
-        "def _save_with_drive_mirror(obj, f, *a, **kw):\n"
-        "    _real_save(obj, f, *a, **kw)\n"
-        "    if DRV_RUN and isinstance(f, (str, os.PathLike)):\n"
-        "        p = str(f)\n"
-        "        base = os.path.basename(p)\n"
-        "        if base.startswith(\"DiT_epoch_\") and base.endswith(\".pth\"):\n"
-        "            try:\n"
-        "                os.makedirs(DRV_RUN, exist_ok=True)\n"
-        "                dst = os.path.join(DRV_RUN, base)\n"
-        "                tmp = dst + \".part\"\n"
-        "                shutil.copy2(p, tmp)\n"
-        "                os.replace(tmp, dst)\n"
-        "                # تشذيب النقاط القديمة على Drive (أبقِ آخر KEEP)\n"
-        "                import glob as _g, re as _re\n"
-        "                cks = sorted(_g.glob(os.path.join(DRV_RUN, \"DiT_epoch_*_step_*.pth\")),\n"
-        "                             key=lambda x: int(_re.search(\"step_([0-9]+)\", x).group(1)))\n"
-        "                for old in (cks[:-KEEP] if KEEP > 0 else []):\n"
-        "                    try: os.remove(old)\n"
-        "                    except OSError: pass\n"
-        "                print(f\"[drive-mirror] {base} -> Drive\", flush=True)\n"
-        "            except Exception as e:\n"
-        "                print(f\"[drive-mirror] فشل نسخ {base}: {e} (التدريب يتابع)\", flush=True)\n"
-        "        elif base == \"ft_model.pth\":\n"
-        "            try:\n"
-        "                os.makedirs(DRV_RUN, exist_ok=True)\n"
-        "                shutil.copy2(p, os.path.join(DRV_RUN, base))\n"
-        "                shutil.copy2(_log_path, os.path.join(DRV_RUN, \"train_console.log\"))\n"
-        "                print(\"[drive-mirror] ft_model.pth + السجل -> Drive (اكتمل التدريب)\", flush=True)\n"
-        "            except Exception as e:\n"
-        "                print(f\"[drive-mirror] فشل نسخ النموذج النهائي: {e}\", flush=True)\n"
-        "torch.save = _save_with_drive_mirror\n"
-        "\n"
-        "t0 = time.time()\n"
-        "print(f\"[train] بدء الضبط الدقيق: {MAXS} خطوة، دفعة {BATCH}، حفظ كل {SAVE_EVERY}\", flush=True)\n"
-        "if DRV_RUN:\n"
-        "    print(f\"[train] مرآة Drive مفعّلة: كل نقطة تُنسخ فور حفظها إلى {DRV_RUN} (أبقِ آخر {KEEP})\", flush=True)\n"
-        "\n"
-        "with contextlib.redirect_stdout(Tee(sys.stdout, _log_path)):\n"
-        "    trainer = seed_train.Trainer(\n"
-        "        config_path=os.path.join(SEEDVC, \"configs\", \"presets\", \"config_dit_mel_seed_uvit_xlsr_tiny.yml\"),\n"
-        "        pretrained_ckpt_path=None,      # يجد آخر نقطة محلية تلقائياً أو ينزّل الأساسية المنشورة\n"
-        "        data_dir=DATA_DIR,\n"
-        "        run_name=CFG[\"RUN_NAME\"],\n"
-        "        batch_size=BATCH,\n"
-        "        num_workers=WORKERS,\n"
-        "        steps=MAXS,\n"
-        "        save_interval=SAVE_EVERY,\n"
-        "        max_epochs=1000,\n"
-        "        device=\"cuda:0\",\n"
-        "    )\n"
-        "    trainer.train()\n"
-        "\n"
-        "print(f\"[train] انتهى في {(time.time()-t0)/60:.1f} دقيقة — ft_model.pth جاهز\", flush=True)\n"
-    )
-    ROOT_TMP = ROOT / "train_driver.py"
-    ROOT_TMP.write_text(TRAIN_DRIVER, encoding="utf-8")
+    # التأكد من إدراج مسارات seed-vc في sys.path للاستيراد المباشر
+    for sp in (SEEDVC, SEEDVC / "modules"):
+        if str(sp) not in sys.path:
+            sys.path.insert(0, str(sp))
 
-    cmd = [str(VENV_PY), "-u", str(ROOT_TMP),
-           str(SEEDVC), str(RUN_DIR), str(DATA_DIR), str(CFG_PATH),
-           str(DRV_RUN or ""), str(KEEP), str(BATCH), str(MAXS),
-           str(int(CFG["SAVE_EVERY"])), str(WANTS)]
-    print("أمر التدريب (يعمل الآن في مقدمة هذه الخلية — سترى التقدم مباشرة):")
-    print("  " + " ".join(cmd[:2]) + " train_driver.py ...\\n")
+    # استيراد وحدة المدرب الرسمية مباشرة
+    import train as seed_train
+
+    _log_path = RUN_DIR / "train_console.log"
+    RUN_DIR.mkdir(parents=True, exist_ok=True)
+
+    class Tee(io.TextIOBase):
+        """stdout مزدوج: يطبع مباشرة في الخلية ويحفظ في train_console.log."""
+        def __init__(self, original, path):
+            self.original = original
+            self.file = open(path, "a", encoding="utf-8", buffering=1)
+        def write(self, s):
+            self.original.write(s)
+            self.file.write(s)
+            return len(s)
+        def flush(self):
+            self.original.flush()
+            self.file.flush()
+
+    # ---- مرآة Drive اللحظية: غلاف حول torch.save ينسخ النقاط فور حفظها ----
+    _real_save = torch.save
+    def _save_with_drive_mirror(obj, f, *a, **kw):
+        _real_save(obj, f, *a, **kw)
+        if DRV_RUN and isinstance(f, (str, os.PathLike)):
+            p = str(f)
+            base = os.path.basename(p)
+            if base.startswith("DiT_epoch_") and base.endswith(".pth"):
+                try:
+                    os.makedirs(DRV_RUN, exist_ok=True)
+                    dst = os.path.join(DRV_RUN, base)
+                    tmp = dst + ".part"
+                    shutil.copy2(p, tmp)
+                    os.replace(tmp, dst)
+                    # تشذيب النقاط القديمة على Drive (أبقِ آخر KEEP)
+                    import glob as _g, re as _re
+                    cks = sorted(_g.glob(os.path.join(DRV_RUN, "DiT_epoch_*_step_*.pth")),
+                                 key=lambda x: int(_re.search(r"step_([0-9]+)", x).group(1)))
+                    for old in (cks[:-KEEP] if KEEP > 0 else []):
+                        try: os.remove(old)
+                        except OSError: pass
+                    print(f"[drive-mirror] {base} -> Drive", flush=True)
+                except Exception as e:
+                    print(f"[drive-mirror] فشل نسخ {base}: {e} (التدريب يتابع)", flush=True)
+            elif base == "ft_model.pth":
+                try:
+                    os.makedirs(DRV_RUN, exist_ok=True)
+                    shutil.copy2(p, os.path.join(DRV_RUN, base))
+                    shutil.copy2(str(_log_path), os.path.join(DRV_RUN, "train_console.log"))
+                    print("[drive-mirror] ft_model.pth + السجل -> Drive (اكتمل التدريب)", flush=True)
+                except Exception as e:
+                    print(f"[drive-mirror] فشل نسخ النموذج النهائي: {e}", flush=True)
+
+    torch.save = _save_with_drive_mirror
+
     t0 = time.time()
-    # ملاحظة سياسة Colab: عملية أمامية تابعة للخلية، بلا فصل عن النواة ولا تخزيد
-    # تظهر مخرجاتها هنا مباشرة وتنتهي بانتهاء التدريب — هذا هو النمط المسموح.
-    rc = sh(cmd, check=False)
-    mins = (time.time() - t0) / 60
+    print(f"[train] بدء الضبط الدقيق باستدعاء seed_train.Trainer مباشرة: {MAXS} خطوة، دفعة {BATCH}، حفظ كل {SAVE_EVERY}", flush=True)
+    if DRV_RUN:
+        print(f"[train] مرآة Drive مفعّلة: كل نقطة تُنسخ فور حفظها إلى {DRV_RUN} (أبقِ آخر {KEEP})", flush=True)
 
+    _old_cwd = os.getcwd()
+    os.chdir(str(SEEDVC))  # train.py يفتح configs/hifigan.yml و checkpoints نسبياً
+    try:
+        with contextlib.redirect_stdout(Tee(sys.stdout, str(_log_path))):
+            trainer = seed_train.Trainer(
+                config_path=os.path.join(str(SEEDVC), "configs", "presets", "config_dit_mel_seed_uvit_xlsr_tiny.yml"),
+                pretrained_ckpt_path=None,      # يجد آخر نقطة محلية تلقائياً أو ينزّل الأساسية المنشورة
+                data_dir=str(DATA_DIR),
+                run_name=CFG["RUN_NAME"],
+                batch_size=BATCH,
+                num_workers=WORKERS,
+                steps=MAXS,
+                save_interval=SAVE_EVERY,
+                max_epochs=1000,
+                device="cuda:0",
+            )
+            trainer.train()
+    finally:
+        os.chdir(_old_cwd)
+        torch.save = _real_save
+
+    mins = (time.time() - t0) / 60
     if FT.exists():
-        print(f"\\n[اكتمل] التدريب انتهى في {mins:.0f} دقيقة — النموذج النهائي: {FT}")
+        print(f"\n[اكتمل] التدريب انتهى في {mins:.0f} دقيقة — النموذج النهائي: {FT}")
         if DRV_RUN:
             print(f"[Drive] النقاط والسجل محفوظة في: {DRV_RUN}")
     else:
         tail = ""
-        logp = RUN_DIR / "train_console.log"
-        if logp.exists():
-            tail = "\\n".join(logp.read_text(errors="replace").splitlines()[-25:])
+        if _log_path.exists():
+            tail = "\n".join(_log_path.read_text(errors="replace").splitlines()[-25:])
         raise RuntimeError(
-            f"توقفت عملية التدريب دون إنتاج النموذج النهائي (رمز {rc}) بعد {mins:.0f} دقيقة.\\n"
-            f"آخر السجل:\\n{tail}\\n"
+            f"توقف التدريب دون إنتاج النموذج النهائي بعد {mins:.0f} دقيقة.\n"
+            f"آخر السجل:\n{tail}\n"
             "أعد هذه الخلية — إن كانت هناك نقطة محفوظة سيُستأنف التدريب منها تلقائياً.")
 
 # منحنى الخسارة من السجل (إن وُجدت نقاط كافية)
@@ -275,7 +248,7 @@ if len(pts) >= 2:
         except Exception:
             pass
 
-print("\\nالخطوة التالية: خلية التحقق (13) — استماع حقيقي بالنقطة الناتجة.")'''))
+print("\nالخطوة التالية: خلية التحقق (13) — استماع حقيقي بالنقطة الناتجة.")'''))
 
 # ============================================================ MD 6 — verify & export
 CELLS_C.append(("markdown", r'''<div dir="rtl">
@@ -303,12 +276,11 @@ exports/iraqi_v1/                          (محلي + MyDrive/rafidain_seedvc/e
 CELLS_C.append(("code", r'''# ============================================================ #
 #  الخلية ١٣ — التحقق: استدلال حقيقي بالنقطة المضبوطة          #
 #  (مصدر من أمثلة Seed-VC + مرجع عراقي من بياناتك -> تشغيل)    #
-#  عبر استيراد inference.py من seed-vc داخل البيئة المعزولة    #
-#  (بلا سطر أوامر للسكربت — نستدعي main() بالأرجس نفسها)       #
+#  عبر استيراد inference.py من seed-vc مباشرة — بلا subprocess  #
 # ============================================================ #
 from IPython.display import Audio, display
 from pathlib import Path
-import subprocess, os
+import sys, types, os
 
 FT = RUN_DIR / "ft_model.pth"
 assert FT.exists(), "لا يوجد ft_model.pth — شغّل خلية التدريب (12) حتى الاكتمال"
@@ -331,33 +303,38 @@ outdir.mkdir(parents=True, exist_ok=True)
 
 print(f"المصدر (إنجليزي): {src.name}")
 print(f"المرجع (عراقي)  : {ref.relative_to(DATA_DIR)}")
-print("تشغيل الاستدلال ... (1-3 دقائق)")
+print("تشغيل الاستدلال عبر استيراد inference.py مباشرة ... (1-3 دقائق)")
 
-# استيراد inference.py كوحدة واستدعاء main() بالأرجس نفسها — داخل venv
-Q = chr(39) * 3   # فاصل ثلاثي-اقتباس آمن داخل غلاف الخلية
-code = (
-    "import sys, types, argparse;"
-    f"sys.path.insert(0, {Q}{SEEDVC}{Q});"
-    f"import os; os.chdir({Q}{SEEDVC}{Q});"
-    "import inference as inf;"
-    "a = types.SimpleNamespace("
-    f"  source={Q}{src}{Q},"
-    f"  target={Q}{ref}{Q},"
-    f"  output={Q}{outdir}{Q},"
-    "  diffusion_steps=16, length_adjust=1.0, inference_cfg_rate=0.7,"
-    "  f0_condition=False, auto_f0_adjust=False, semi_tone_shift=0,"
-    f"  checkpoint={Q}{FT}{Q},"
-    f"  config={Q}{SEEDVC_CFG}{Q},"
-    "  fp16=True);"
-    "inf.main(a)"
-)
-r = subprocess.run([str(VENV_PY), "-c", code], env=ENV, text=True,
-                   stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-print(r.stdout[-4000:], flush=True)   # آخر 4KB من السجل (تحميل النماذج مطوّل)
+# استيراد inference.py كوحدة واستدعاء main() مباشرة في النواة
+for sp in (SEEDVC, SEEDVC / "modules"):
+    if str(sp) not in sys.path:
+        sys.path.insert(0, str(sp))
+
+_old_cwd = os.getcwd()
+os.chdir(str(SEEDVC))
+try:
+    import inference as inf
+    a = types.SimpleNamespace(
+        source=str(src),
+        target=str(ref),
+        output=str(outdir),
+        diffusion_steps=16,
+        length_adjust=1.0,
+        inference_cfg_rate=0.7,
+        f0_condition=False,
+        auto_f0_adjust=False,
+        semi_tone_shift=0,
+        checkpoint=str(FT),
+        config=str(SEEDVC_CFG),
+        fp16=True,
+    )
+    inf.main(a)
+finally:
+    os.chdir(_old_cwd)
 
 outs = sorted(outdir.glob("vc_*.wav"))
 if outs:
-    print(f"\\nناتج التحويل: {outs[0].name}  ({outs[0].stat().st_size/1e6:.1f} MB)")
+    print(f"\nناتج التحويل: {outs[0].name}  ({outs[0].stat().st_size/1e6:.1f} MB)")
     print("استمع للناتج (المصدر إنجليزي يحمل الطابع الصوتي العراقي المرجعي):")
     display(Audio(filename=str(outs[0])))
     for extra in outs[1:3]:
@@ -370,31 +347,24 @@ else:
 CELLS_C.append(("code", r'''# ============================================================ #
 #  الخلية ١٤ — تصدير الحزمة النهائية                           #
 #  أوزان + إعداد + تقرير + سجلات — محلياً ثم نسخها إلى Drive   #
-#  عبر استيراد iraqi_pipeline داخل البيئة المعزولة (cmd_export)#
+#  عبر استدعاء PIPELINE.cmd_export مباشرة — بلا subprocess    #
 # ============================================================ #
-import shutil, subprocess, json
+import shutil, json, types
 from pathlib import Path
 
 FT = RUN_DIR / "ft_model.pth"
 assert FT.exists(), "لا يوجد ft_model.pth — أكمل التدريب أولاً (الخلية 12)"
 EXPORT_DIR = EXPORTS / CFG["RUN_NAME"]
 
-# استدعاء cmd_export من وحدة خط البيانات (نفس الواجهة، بلا سطر أوامر)
-Q = chr(39) * 3   # فاصل ثلاثي-اقتباس آمن داخل غلاف الخلية
-code = (
-    "import types, importlib.util as ilu;"
-    f"spec = ilu.spec_from_file_location('iraqi_pipeline', {Q}{PIPE_SRC}{Q});"
-    "m = ilu.module_from_spec(spec); spec.loader.exec_module(m);"
-    "m.cmd_export(types.SimpleNamespace("
-    f"  run_dir={Q}{RUN_DIR}{Q},"
-    f"  config={Q}{SEEDVC_CFG}{Q},"
-    f"  data_dir={Q}{DATA_DIR}{Q},"
-    f"  out={Q}{EXPORT_DIR}{Q}))"
-)
-r = subprocess.run([str(VENV_PY), "-c", code], env=ENV, text=True,
-                   stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-print(r.stdout, flush=True)
-assert r.returncode == 0 and (EXPORT_DIR / "seed_uvit_tat_xlsr_tiny_iraqi.pth").exists(), "فشل التصدير — راجع السجل"
+# استدعاء cmd_export مباشرة من كائن PIPELINE المستورد في الخلية 6
+print(f"تصدير الحزمة عبر PIPELINE.cmd_export مباشرة ...")
+PIPELINE.cmd_export(types.SimpleNamespace(
+    run_dir=str(RUN_DIR),
+    config=str(SEEDVC_CFG),
+    data_dir=str(DATA_DIR),
+    out=str(EXPORT_DIR),
+))
+assert (EXPORT_DIR / "seed_uvit_tat_xlsr_tiny_iraqi.pth").exists(), "فشل التصدير — راجع السجل"
 
 # توثيق إضافي يُنسخ مع الحزمة (قابلية إعادة الإنتاج جزء من الجودة)
 for extra in (RUN_DIR / "train_console.log", RUN_DIR / "loss_curve.png",
@@ -492,34 +462,23 @@ if not CFG["HF_TOKEN"]:
     print("  4) أعد تشغيل هذه الخلية — سترفع الحزمة كاملة إلى مستودع خاص في حسابك")
 else:
     assert (EXPORT_DIR / "seed_uvit_tat_xlsr_tiny_iraqi.pth").exists(), "شغّل خلية التصدير (14) أولاً"
-    # الرفع من البيئة المعزولة (حيث huggingface_hub مثبت)
-    import subprocess, time
-    code = (
-        "import os, time\n"
-        "from huggingface_hub import HfApi\n"
-        "token = os.environ['HF_TOKEN']\n"
-        "api = HfApi(token=token)\n"
-        "user = api.whoami()['name']\n"
-        "repo_id = os.environ.get('NB_REPO_ID', '').strip() or user + '/rafidain-seedvc-iraqi'\n"
-        "private = os.environ.get('NB_PRIVATE', '1') == '1'\n"
-        "api.create_repo(repo_id, private=private, exist_ok=True)\n"
-        "print('[hf] upload ' + os.environ['NB_EXPORT_DIR'] + ' -> ' + repo_id + ' (private = ' + str(private) + ')')\n"
-        "api.upload_folder(\n"
-        "    folder_path=os.environ['NB_EXPORT_DIR'],\n"
-        "    repo_id=repo_id,\n"
-        "    repo_type='model',\n"
-        "    commit_message='Rafidain Iraqi fine-tune (' + time.strftime('%Y-%m-%d %H:%M') + ')')\n"
-        "print('[hf] REPO_URL: https://huggingface.co/' + repo_id)\n"
+    # الرفع عبر مكتبة huggingface_hub مباشرة في النواة
+    import time
+    from huggingface_hub import HfApi
+    token = str(CFG["HF_TOKEN"])
+    api = HfApi(token=token)
+    user = api.whoami()["name"]
+    repo_id = str(CFG.get("HF_REPO_ID", "")).strip() or f"{user}/rafidain-seedvc-iraqi"
+    private = bool(CFG["HF_PRIVATE"])
+    api.create_repo(repo_id, private=private, exist_ok=True)
+    print(f"[hf] upload {EXPORT_DIR} -> {repo_id} (private = {private})")
+    api.upload_folder(
+        folder_path=str(EXPORT_DIR),
+        repo_id=repo_id,
+        repo_type="model",
+        commit_message=f"Rafidain Iraqi fine-tune ({time.strftime('%Y-%m-%d %H:%M')})"
     )
-    env = dict(ENV)
-    env["HF_TOKEN"] = str(CFG["HF_TOKEN"])
-    env["NB_EXPORT_DIR"] = str(EXPORT_DIR)
-    env["NB_REPO_ID"] = str(CFG.get("HF_REPO_ID", ""))
-    env["NB_PRIVATE"] = "1" if CFG["HF_PRIVATE"] else "0"
-    r = subprocess.run([str(VENV_PY), "-c", code], env=env, text=True,
-                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-    print(r.stdout, flush=True)
-    assert r.returncode == 0, "فشل الرفع — تحقق من الرمز ومن الاتصال ثم أعد الخلية"
+    print(f"[hf] REPO_URL: https://huggingface.co/{repo_id}")
     print(R"""
 [تم] النموذج الآن في حسابك على HuggingFace — بشكل دائم.
 لتنزيله في أي وقت مستقبلاً من أي جهاز (بلا Google ولا Colab):
@@ -592,16 +551,18 @@ else:
 
 (أ) استدلال فوري في هذه الجلسة (البيئة جاهزة الآن):
     في خلية جديدة (نفس أسلوب خلية التحقق 13):
-      import subprocess, os
-      code = ("import sys, types; sys.path.insert(0, r\\"{SEEDVC}\\");"
-              "import os; os.chdir(r\\"{SEEDVC}\\"); import inference as inf;"
-              "a = types.SimpleNamespace(source=r\\"<صوت-المتكلم-الأصلي.wav>\\","
-              " target=r\\"<صوت-مرجعي-عراقي.wav>\\", output=r\\"./out\\","
-              " diffusion_steps=30, length_adjust=1.0, inference_cfg_rate=0.7,"
-              " f0_condition=False, auto_f0_adjust=False, semi_tone_shift=0,"
-              " checkpoint=r\\"{W}\\", config=r\\"{C}\\", fp16=True);"
-              "inf.main(a)")
-      subprocess.run([r"{VENV_PY}", "-c", code])
+      import sys, types, os
+      for sp in (r"{SEEDVC}", os.path.join(r"{SEEDVC}", "modules")):
+          if sp not in sys.path:
+              sys.path.insert(0, sp)
+      os.chdir(r"{SEEDVC}")
+      import inference as inf
+      a = types.SimpleNamespace(source=r"<صوت-المتكلم-الأصلي.wav>",
+                               target=r"<صوت-مرجعي-عراقي.wav>", output=r"./out",
+                               diffusion_steps=30, length_adjust=1.0, inference_cfg_rate=0.7,
+                               f0_condition=False, auto_f0_adjust=False, semi_tone_shift=0,
+                               checkpoint=r"{W}", config=r"{C}", fp16=True)
+      inf.main(a)
 
 (ب) خدمة رافِدَين الكاملة على نفس جلسة Colab — REST + WebSocket + واجهة ويب
     بنفق عام مجاني (trycloudflare) للاستنساخ اللحظي من أي مكان.

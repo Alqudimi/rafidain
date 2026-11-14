@@ -43,7 +43,7 @@ CELLS_B.append(("code", r'''# ==================================================
 #  rafidain_current_sources_ready.tar.gz (4.89GB)              #
 #  بلا إعادة تنزيل من المصادر وبلا أي إعادة معالجة            #
 # ============================================================ #
-import os, shutil, subprocess, time, json
+import os, shutil, time, json
 from pathlib import Path
 
 URL    = CFG["READY_ARCHIVE_URL"]
@@ -266,25 +266,14 @@ CELLS_B.append(("code", r'''# ==================================================
 #  DiT_uvit_tat_xlsr_ema + XLSR-300m + HiFT + CAMPPlus +       #
 #  OpenVoice — كلها في مجلد checkpoints داخل seed-vc           #
 #  (يمنع تعطل بدء التدريب لاحقاً بسبب التنزيل، وقابل للاستئناف)#
-#  عبر استيراد iraqi_pipeline داخل البيئة المعزولة — بلا CLI   #
+#  عبر استدعاء PIPELINE.cmd_prefetch مباشرة — بلا subprocess   #
 # ============================================================ #
-import subprocess, shutil
+import types
 from pathlib import Path
 
-# استدعاء cmd_prefetch من وحدة خط البيانات — داخل البيئة المعزولة (torch/huggingface_hub)
-# نمرر args كما يفعل argparse تماماً (نفس الواجهة، بلا سطر أوامر)
-# Q = فاصل ثلاثي-اقتباس يُبنى بـ chr(39) حتى لا يتصادم مع غلاف هذه الخلية النصية
-Q = chr(39) * 3
-code = (
-    "import types, importlib.util as ilu, os as _os;"
-    f"spec = ilu.spec_from_file_location('iraqi_pipeline', {Q}{PIPE_SRC}{Q});"
-    "m = ilu.module_from_spec(spec); spec.loader.exec_module(m);"
-    f"m.cmd_prefetch(types.SimpleNamespace(repo={Q}{SEEDVC}{Q}))"
-)
-r = subprocess.run([str(VENV_PY), "-c", code], env=ENV, text=True,
-                   stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-print(r.stdout, flush=True)
-assert r.returncode == 0, "فشل prefetch — راجع السجل أعلاه"
+# استدعاء cmd_prefetch من وحدة خط البيانات المستوردة مباشرة في النواة
+print("[prefetch] تنزيل نقاط النموذج الأساسية عبر PIPELINE.cmd_prefetch مباشرة ...")
+PIPELINE.cmd_prefetch(types.SimpleNamespace(repo=str(SEEDVC)))
 
 ck = SEEDVC / "checkpoints"
 total = sum(f.stat().st_size for f in ck.rglob("*") if f.is_file()) / 1e9 if ck.exists() else 0

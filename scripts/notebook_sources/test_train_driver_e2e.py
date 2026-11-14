@@ -81,38 +81,45 @@ mod.save = _real_save
 sys.modules["torch"] = mod
 ''')
 
-# ---- 2) extract TRAIN_DRIVER from the built notebook and write driver file ----
+# ---- 2) extract training code from cell 12 ----
 nb = json.loads(NB.read_text(encoding="utf-8"))
 train_cell = next("".join(c["source"]) for c in nb["cells"]
                   if c["cell_type"] == "code" and "الخلية ١٢" in "".join(c["source"]))
-m = re.search(r"TRAIN_DRIVER = \((.*?)\n    \)\n", train_cell, re.S)
-assert m, "TRAIN_DRIVER not found"
-scope = {}
-exec("TQ = chr(34) * 3\n" + m.group(0), scope)
-driver_src = scope["TRAIN_DRIVER"]
-DRIVER = TMP / "train_driver.py"
-DRIVER.write_text(driver_src, encoding="utf-8")
 
-# ---- 3) run driver with system python + mock torch preload ----
+# ---- 3) run cell 12 with mock environment and direct import ----
 RUN_DIR = SEEDVC / "runs" / "iraqi_v1"
 DATA_DIR = TMP / "data"
 DATA_DIR.mkdir()
-CFG_PATH = TMP / "cfg.json"
-CFG_PATH.write_text(json.dumps({"RUN_NAME": "iraqi_v1"}))
 DRV_RUN = TMP / "GDrive" / "runs" / "iraqi_v1"
 
-loader = f'''
-import sys, types
+runner = f'''
+import sys, types, json
+from pathlib import Path
 sys.path.insert(0, r"{TMP}")
-import mock_torch  # installs sys.modules["torch"] BEFORE the driver imports it
-sys.argv = ["train_driver.py", r"{SEEDVC}", r"{RUN_DIR}", r"{DATA_DIR}", r"{CFG_PATH}",
-            r"{DRV_RUN}", "2", "2", "30", "10", "0"]
-exec(open(r"{DRIVER}", encoding="utf-8").read())
-'''
-LOADER = TMP / "loader.py"
-LOADER.write_text(loader, encoding="utf-8")
+import mock_torch
 
-r = subprocess.run([sys.executable, str(LOADER)], capture_output=True, text=True,
+ROOT = Path(r"{TMP}")
+SEEDVC = Path(r"{SEEDVC}")
+RUN_DIR = Path(r"{RUN_DIR}")
+DATA_DIR = Path(r"{DATA_DIR}")
+CFG = {{
+    "RUN_NAME": "iraqi_v1",
+    "_BATCH": "2",
+    "STEPS": "30",
+    "TRAIN_WORKERS": "0",
+    "SAVE_EVERY": "10",
+    "DRIVE_BACKUP": True,
+    "DRIVE_CKPT_KEEP": 2
+}}
+def drive_run_dir():
+    return Path(r"{DRV_RUN}")
+
+{train_cell}
+'''
+RUNNER = TMP / "runner.py"
+RUNNER.write_text(runner, encoding="utf-8")
+
+r = subprocess.run([sys.executable, str(RUNNER)], capture_output=True, text=True,
                    env={**os.environ, "MOCK_TORCH_DIR": str(TMP)})
 print("--- driver stdout/stderr ---")
 print(r.stdout[-1500:])

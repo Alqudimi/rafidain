@@ -20,7 +20,10 @@ from colab_cells_c import CELLS_C
 ALL = CELLS_A + CELLS_B + CELLS_C
 _HERE = Path(__file__).resolve().parent
 OUT = _HERE.parent.parent / "rafidain_colab_training.ipynb"  # repo root
+OUT_V2 = _HERE.parent.parent / "notbooks" / "rafidain_colab_training_v2.ipynb"
+OUT_V1 = _HERE.parent.parent / "notbooks" / "rafidain_colab_training.ipynb"
 OUT.parent.mkdir(parents=True, exist_ok=True)
+OUT_V2.parent.mkdir(parents=True, exist_ok=True)
 
 def to_source_lines(text):
     """nbformat source: list of lines each ending with \\n (except maybe last)."""
@@ -63,8 +66,12 @@ nb = {
     "cells": cells,
 }
 
-OUT.write_text(json.dumps(nb, ensure_ascii=False, indent=1), encoding="utf-8")
+nb_json = json.dumps(nb, ensure_ascii=False, indent=1)
+OUT.write_text(nb_json, encoding="utf-8")
+OUT_V2.write_text(nb_json, encoding="utf-8")
+OUT_V1.write_text(nb_json, encoding="utf-8")
 print(f"[build] wrote {OUT}  ({OUT.stat().st_size/1024:.1f} KB)")
+print(f"[build] wrote {OUT_V2} and {OUT_V1}")
 print(f"[build] {len(cells)} cells = {n_md} markdown + {n_code} code")
 
 # ================================================================
@@ -117,7 +124,10 @@ if "READY_ARCHIVE_SIZE" not in full_concat or "stat().st_size == EXPECT" not in 
 if ".ready_archive_ok" not in full_concat:
     errors.append("archive stamp file (.ready_archive_ok) missing — would re-extract every run")
 
-# training must import train as a module and call Trainer(...).train()
+def _code_only(text):
+    return "\n".join(l for l in text.splitlines() if not l.strip().startswith("#"))
+
+# training must import train as a module and call Trainer(...).train() directly without subprocess
 train_cell = next(("\n".join(c["source"]) for c in code_cells if "الخلية ١٢" in "".join(c["source"])), "")
 if train_cell:
     for token in ("import train as seed_train", "seed_train.Trainer(", "trainer.train()",
@@ -125,24 +135,36 @@ if train_cell:
                   "ft_model.pth", "train_console.log"):
         if token not in train_cell:
             errors.append(f"training cell missing token: {token}")
-    # the embedded TRAIN_DRIVER must parse: extract the string-concatenation result by exec
-    # (safe: pure string building, no side effects before definitions)
+    if "subprocess" in _code_only(train_cell):
+        errors.append("training cell must NOT use subprocess — must call Trainer directly via import")
+    if "train_driver.py" in _code_only(train_cell):
+        errors.append("training cell must NOT write temporary train_driver.py script")
 else:
     errors.append("training cell (12) not found")
 
-# verify/export cells must invoke via import, not CLI
+# verify/export/prefetch cells must invoke via direct import, not subprocess or CLI
 verify_cell = next(("\n".join(c["source"]) for c in code_cells if "الخلية ١٣" in "".join(c["source"])), "")
 export_cell = next(("\n".join(c["source"]) for c in code_cells if "الخلية ١٤" in "".join(c["source"])), "")
-if verify_cell and '"inference.py"' in verify_cell.replace("'", '"'):
-    errors.append("verify cell still calls inference.py as CLI — must import the module")
-for token in ("import inference as inf", "inf.main(a)"):
-    if verify_cell and token not in verify_cell:
-        errors.append(f"verify cell missing token: {token}")
-for token in ("m.cmd_export(", "cmd_export"):
-    if export_cell and token not in export_cell:
-        errors.append(f"export cell missing token: {token}")
-if export_cell and "PIPE," in export_cell and "venv/bin/python" not in export_cell:
-    pass  # export uses VENV_PY variable, fine
+prefetch_cell = next(("\n".join(c["source"]) for c in code_cells if "الخلية ١٠" in "".join(c["source"])), "")
+
+if verify_cell:
+    for token in ("import inference as inf", "inf.main(a)"):
+        if token not in verify_cell:
+            errors.append(f"verify cell missing token: {token}")
+    if "subprocess" in _code_only(verify_cell):
+        errors.append("verify cell must NOT use subprocess — must invoke inference.py directly via import")
+
+if export_cell:
+    if "cmd_export" not in export_cell:
+        errors.append("export cell missing token: cmd_export")
+    if "subprocess" in _code_only(export_cell):
+        errors.append("export cell must NOT use subprocess — must call cmd_export directly")
+
+if prefetch_cell:
+    if "cmd_prefetch" not in prefetch_cell:
+        errors.append("prefetch cell missing token: cmd_prefetch")
+    if "subprocess" in _code_only(prefetch_cell):
+        errors.append("prefetch cell must NOT use subprocess — must call cmd_prefetch directly")
 
 # no CLI invocation of iraqi_pipeline.py as a script (must be imported)
 if re.search(r"VENV_PY,\s*PIPE\b", full_concat) or re.search(r"PIPE\b[^)]*small", full_concat):
